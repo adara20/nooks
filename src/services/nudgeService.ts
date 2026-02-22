@@ -6,7 +6,9 @@ export interface Nudge {
   type: 'urgent' | 'important' | 'praise' | 'gentle';
 }
 
-export function generateNudges(tasks: Task[]): Nudge[] {
+const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+
+export function generateNudges(tasks: Task[], lastExportDate: Date | null = null): Nudge[] {
   const nudges: Nudge[] = [];
   const activeTasks = tasks.filter(t => t.status !== 'done' && t.status !== 'backlog');
   const backlogTasks = tasks.filter(t => t.status === 'backlog');
@@ -69,6 +71,22 @@ export function generateNudges(tasks: Task[]): Nudge[] {
       id: 'light-load',
       message: "Looking good! Just a few bits left to tidy up.",
       type: 'praise'
+    });
+  }
+
+  const backupOverdue =
+    lastExportDate === null ||
+    Date.now() - lastExportDate.getTime() >= THREE_DAYS_MS;
+
+  if (backupOverdue) {
+    const message =
+      lastExportDate === null
+        ? "No backup yet. Head to Settings to save a copy of your nooks."
+        : `Your last backup was a while ago. Worth saving a fresh copy.`;
+    nudges.push({
+      id: 'backup-overdue',
+      message,
+      type: 'gentle',
     });
   }
 
