@@ -44,7 +44,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigateToTasks, onNavigat
   };
 
   return (
-    <div className="p-6 pb-32 space-y-8">
+    <div className="p-6 pb-32 space-y-8 safe-top">
       <header className="flex items-start justify-between">
         <div className="space-y-1">
           <h1 className="text-4xl font-display font-bold text-nook-ink">Hey there.</h1>

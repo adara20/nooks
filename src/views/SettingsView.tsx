@@ -136,7 +136,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onBack }) => {
   };
 
   return (
-    <div className="p-6 pb-32 space-y-8">
+    <div className="p-6 pb-32 space-y-8 safe-top">
       {/* Header */}
       <header className="flex items-center gap-4">
         <Button variant="ghost" size="icon" onClick={onBack} aria-label="Back">

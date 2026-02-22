@@ -65,7 +65,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialStatusFilter, onCle
   return (
     <div className="pb-32">
       {/* Top Bar */}
-      <div className="sticky top-0 bg-warm-bg/80 backdrop-blur-md z-30 px-6 pt-8 pb-4 space-y-4">
+      <div className="sticky top-0 bg-warm-bg/80 backdrop-blur-md z-30 px-6 pt-8 pb-4 space-y-4 safe-top">
         <div className="flex items-center justify-between">
           <h1 className="text-3xl font-display font-bold text-nook-ink">Tasks</h1>
           <div className="flex gap-2">

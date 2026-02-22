@@ -27,7 +27,7 @@ export const CalendarView: React.FC = () => {
   const nextMonth = () => setCurrentDate(addMonths(currentDate, 1));
 
   return (
-    <div className="p-6 pb-32 space-y-8">
+    <div className="p-6 pb-32 space-y-8 safe-top">
       <header className="flex items-center justify-between">
         <h1 className="text-3xl font-display font-bold text-nook-ink">
           {format(currentDate, 'MMMM yyyy')}
