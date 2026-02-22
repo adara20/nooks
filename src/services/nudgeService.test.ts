@@ -77,3 +77,49 @@ describe('generateNudges', () => {
     expect(nudges.find(n => n.id === 'light-load')).toBeUndefined();
   });
 });
+
+describe('generateNudges: backup-overdue nudge', () => {
+  const activeTasks = [createTask({ status: 'todo' })];
+
+  it('returns a backup-overdue nudge when lastExportDate is null (never backed up)', () => {
+    const nudges = generateNudges(activeTasks, null);
+    const nudge = nudges.find(n => n.id === 'backup-overdue');
+    expect(nudge).toBeDefined();
+    expect(nudge?.type).toBe('gentle');
+  });
+
+  it('returns a backup-overdue nudge when lastExportDate is exactly 3 days ago', () => {
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    const nudges = generateNudges(activeTasks, threeDaysAgo);
+    expect(nudges.find(n => n.id === 'backup-overdue')).toBeDefined();
+  });
+
+  it('returns a backup-overdue nudge when lastExportDate is more than 3 days ago', () => {
+    const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+    const nudges = generateNudges(activeTasks, fiveDaysAgo);
+    expect(nudges.find(n => n.id === 'backup-overdue')).toBeDefined();
+  });
+
+  it('does NOT return a backup-overdue nudge when lastExportDate is less than 3 days ago', () => {
+    const oneDayAgo = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000);
+    const nudges = generateNudges(activeTasks, oneDayAgo);
+    expect(nudges.find(n => n.id === 'backup-overdue')).toBeUndefined();
+  });
+
+  it('does NOT return a backup-overdue nudge when lastExportDate is today', () => {
+    const nudges = generateNudges(activeTasks, new Date());
+    expect(nudges.find(n => n.id === 'backup-overdue')).toBeUndefined();
+  });
+
+  it('uses "No backup yet" message when lastExportDate is null', () => {
+    const nudges = generateNudges(activeTasks, null);
+    const nudge = nudges.find(n => n.id === 'backup-overdue');
+    expect(nudge?.message).toContain('No backup yet');
+  });
+
+  it('defaults to null for lastExportDate (backward compatible — existing tests pass without providing it)', () => {
+    // Calling with no second arg should still produce backup-overdue (null default)
+    const nudges = generateNudges(activeTasks);
+    expect(nudges.find(n => n.id === 'backup-overdue')).toBeDefined();
+  });
+});
