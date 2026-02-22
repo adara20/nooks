@@ -4,10 +4,13 @@ import { BottomNav, type TabType } from './components/BottomNav';
 import { HomeView } from './views/HomeView';
 import { TasksView } from './views/TasksView';
 import { CalendarView } from './views/CalendarView';
+import { SettingsView } from './views/SettingsView';
 import { motion, AnimatePresence } from 'motion/react';
 
+type AppView = TabType | 'settings';
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState<TabType>('home');
+  const [activeView, setActiveView] = useState<AppView>('home');
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
 
@@ -21,7 +24,11 @@ export default function App() {
 
   const navigateToTasks = (filter: string | null) => {
     setStatusFilter(filter);
-    setActiveTab('tasks');
+    setActiveView('tasks');
+  };
+
+  const navigateToSettings = () => {
+    setActiveView('settings');
   };
 
   if (!isInitialized) {
@@ -37,35 +44,47 @@ export default function App() {
     );
   }
 
+  const activeTab: TabType = activeView === 'settings' ? 'home' : activeView;
+
   return (
     <div className="min-h-screen max-w-md mx-auto bg-warm-bg relative overflow-x-hidden">
       <AnimatePresence mode="wait">
         <motion.div
-          key={activeTab}
+          key={activeView}
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -10 }}
           transition={{ duration: 0.2 }}
         >
-          {activeTab === 'home' && <HomeView onNavigateToTasks={navigateToTasks} />}
-          {activeTab === 'tasks' && (
-            <TasksView 
-              initialStatusFilter={statusFilter} 
-              onClearFilter={() => setStatusFilter(null)} 
+          {activeView === 'home' && (
+            <HomeView
+              onNavigateToTasks={navigateToTasks}
+              onNavigateToSettings={navigateToSettings}
+            />
+          )}
+          {activeView === 'tasks' && (
+            <TasksView
+              initialStatusFilter={statusFilter}
+              onClearFilter={() => setStatusFilter(null)}
               onFilterChange={setStatusFilter}
             />
           )}
-          {activeTab === 'calendar' && <CalendarView />}
+          {activeView === 'calendar' && <CalendarView />}
+          {activeView === 'settings' && (
+            <SettingsView onBack={() => setActiveView('home')} />
+          )}
         </motion.div>
       </AnimatePresence>
 
-      <BottomNav 
-        activeTab={activeTab} 
-        onTabChange={(tab) => {
-          setActiveTab(tab);
-          if (tab !== 'tasks') setStatusFilter(null);
-        }} 
-      />
+      {activeView !== 'settings' && (
+        <BottomNav
+          activeTab={activeTab}
+          onTabChange={(tab) => {
+            setActiveView(tab);
+            if (tab !== 'tasks') setStatusFilter(null);
+          }}
+        />
+      )}
     </div>
   );
 }

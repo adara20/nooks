@@ -2,22 +2,24 @@ import React from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { repository } from '../services/repository';
 import { generateNudges } from '../services/nudgeService';
+import { getLastExportDate } from '../services/backupService';
 import { Card } from '../components/Card';
 import { motion } from 'motion/react';
-import { Sparkles, Flame, Info, CheckCircle2 } from 'lucide-react';
+import { Sparkles, Flame, Info, CheckCircle2, Settings } from 'lucide-react';
 import { cn } from '../utils/cn';
 
 interface HomeViewProps {
   onNavigateToTasks: (status: string | null) => void;
+  onNavigateToSettings: () => void;
 }
 
-export const HomeView: React.FC<HomeViewProps> = ({ onNavigateToTasks }) => {
+export const HomeView: React.FC<HomeViewProps> = ({ onNavigateToTasks, onNavigateToSettings }) => {
   const tasks = useLiveQuery(() => repository.getAllTasks());
   const buckets = useLiveQuery(() => repository.getAllBuckets());
 
   if (!tasks || !buckets) return null;
 
-  const nudges = generateNudges(tasks);
+  const nudges = generateNudges(tasks, getLastExportDate());
   const activeTasks = tasks.filter(t => t.status !== 'done' && t.status !== 'backlog');
   const doneTasks = tasks.filter(t => t.status === 'done');
   const inProgressTasks = tasks.filter(t => t.status === 'in-progress');
@@ -43,9 +45,18 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigateToTasks }) => {
 
   return (
     <div className="p-6 pb-32 space-y-8">
-      <header className="space-y-1">
-        <h1 className="text-4xl font-display font-bold text-nook-ink">Hey there.</h1>
-        <p className="text-nook-ink/60 font-medium">Let's find some nooks to fill.</p>
+      <header className="flex items-start justify-between">
+        <div className="space-y-1">
+          <h1 className="text-4xl font-display font-bold text-nook-ink">Hey there.</h1>
+          <p className="text-nook-ink/60 font-medium">Let's find some nooks to fill.</p>
+        </div>
+        <button
+          onClick={onNavigateToSettings}
+          aria-label="Settings"
+          className="mt-1 p-2 rounded-xl text-nook-ink/40 hover:text-nook-ink/70 hover:bg-nook-ink/5 transition-colors"
+        >
+          <Settings size={22} />
+        </button>
       </header>
 
       <section className="space-y-4">
@@ -58,9 +69,10 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigateToTasks }) => {
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: idx * 0.1 }}
             >
-              <Card 
+              <Card
                 onClick={() => {
-                  if (nudge.id === 'urgent-important') onNavigateToTasks('urgent-important');
+                  if (nudge.id === 'backup-overdue') onNavigateToSettings();
+                  else if (nudge.id === 'urgent-important') onNavigateToTasks('urgent-important');
                   else if (nudge.id === 'important-not-urgent') onNavigateToTasks('important-not-urgent');
                   else if (nudge.id === 'backlog-nudge' || nudge.id === 'backlog-heavy') onNavigateToTasks('backlog');
                   else onNavigateToTasks('active');
