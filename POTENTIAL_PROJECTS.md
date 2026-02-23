@@ -40,6 +40,34 @@ This document tracks high-level feature ideas and architectural improvements for
 - **Details:** Monthly grid, tap a day to see tasks due. Overdue tasks highlighted. Integration with the prescription reminder feature.
 - **Value:** Time-aware task management for deadline-driven work.
 
+## 7. Push Notifications & Smart Nudges
+**Reference:** https://www.magicbell.com/blog/using-push-notifications-in-pwas
+**Problem:** Nudges and due-date reminders only surface when the user opens the app. High-value tasks (especially Quadrant II — important but not urgent) can silently slip.
+**Solution:** Native OS push notifications to surface reminders proactively, even when the app isn't open.
+
+### Phase 1 — Local Notifications (no backend, fits current architecture)
+- Add a `notificationService.ts` that wraps the browser Notifications API
+- Request permission on first meaningful user interaction
+- Service worker fires `showNotification()` on SW `activate` or via a periodic check
+- Reuse existing `nudgeService.generateNudges()` output as notification content — same logic, different delivery channel
+- **Candidate triggers:**
+  - Task due today / overdue
+  - Quadrant II tasks (`!isUrgent && isImportant`) idle for N days — "focus nudge"
+  - Backup staleness (≥3 days) — already a nudge, easy to promote to notification
+- **Limitation:** Only fires when device is on and OS hasn't killed the SW. Good enough for most use cases.
+
+### Phase 2 — Full Push (requires backend, pairs with Firebase Cloud Sync)
+- Generate VAPID key pair; public key sent at subscribe-time, private key signs server payloads
+- Store push subscriptions in Firestore alongside synced task data
+- Firebase Cloud Function sends VAPID-signed HTTP POST to stored subscription endpoints
+- FCM as the push relay — works for Chrome (Android/desktop) and iOS Home Screen installs
+- iOS caveat: push only works for Home Screen installed PWAs (not in-browser tabs); requires valid `manifest.json` ✅ already present
+- Handle `410 Gone` responses to prune expired subscriptions
+- **Natural fit:** shares the same Firebase infrastructure as Project #1 (Cloud Sync), so both should be scoped together
+
+### Architecture Note
+`notificationService.ts` should consume `nudgeService` output directly so home screen nudge cards and push notifications stay in sync without duplicating logic.
+
 ---
 
 ## Future Ideas
