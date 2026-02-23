@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { formatDistanceToNow } from 'date-fns';
-import { Download, Upload, ArrowLeft, AlertCircle } from 'lucide-react';
+import { Download, Upload, ArrowLeft, AlertCircle, Cloud, CloudOff, LogIn, UserPlus, LogOut, CheckCircle2, Loader2 } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { Modal } from '../components/Modal';
@@ -16,11 +16,187 @@ import {
   setLastExportDate,
   type NooksBackup,
 } from '../services/backupService';
+import { useAuth } from '../context/AuthContext';
 import { cn } from '../utils/cn';
 
 interface SettingsViewProps {
   onBack: () => void;
 }
+
+// ─── Cloud Backup Card ────────────────────────────────────────────────────────
+
+const CloudBackupCard: React.FC = () => {
+  const { user, isSignedIn, syncStatus, signIn, signUp, signOut } = useAuth();
+  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authLoading, setAuthLoading] = useState(false);
+
+  const handleAuth = async () => {
+    if (!email.trim() || !password.trim()) {
+      setAuthError('Please enter your email and password.');
+      return;
+    }
+    setAuthError(null);
+    setAuthLoading(true);
+    try {
+      if (mode === 'signin') {
+        await signIn(email.trim(), password);
+      } else {
+        await signUp(email.trim(), password);
+      }
+      setEmail('');
+      setPassword('');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Map common Firebase error codes to friendly messages
+      if (msg.includes('auth/invalid-credential') || msg.includes('auth/wrong-password') || msg.includes('auth/user-not-found')) {
+        setAuthError('Incorrect email or password.');
+      } else if (msg.includes('auth/email-already-in-use')) {
+        setAuthError('An account with this email already exists. Try signing in instead.');
+      } else if (msg.includes('auth/weak-password')) {
+        setAuthError('Password must be at least 6 characters.');
+      } else if (msg.includes('auth/invalid-email')) {
+        setAuthError('Please enter a valid email address.');
+      } else {
+        setAuthError('Something went wrong. Please try again.');
+      }
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const syncLabel: Record<typeof syncStatus, string> = {
+    idle: 'Connected',
+    syncing: 'Syncing…',
+    synced: 'All synced',
+    error: 'Sync error',
+  };
+
+  const SyncIcon = () => {
+    if (syncStatus === 'syncing') return <Loader2 size={16} className="animate-spin text-nook-ink/50" />;
+    if (syncStatus === 'synced') return <CheckCircle2 size={16} className="text-green-500" />;
+    if (syncStatus === 'error') return <AlertCircle size={16} className="text-nook-orange" />;
+    return <Cloud size={16} className="text-nook-ink/50" />;
+  };
+
+  if (isSignedIn) {
+    return (
+      <div data-testid="cloud-signed-in">
+      <Card className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Cloud size={18} className="text-nook-ink/60" />
+            <span className="text-sm font-bold text-nook-ink">Cloud Backup</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <SyncIcon />
+            <span className="text-xs text-nook-ink/60">{syncLabel[syncStatus]}</span>
+          </div>
+        </div>
+
+        <p className="text-xs text-nook-ink/50 truncate" data-testid="cloud-email">{user?.email}</p>
+
+        <Button
+          variant="secondary"
+          className="w-full py-3 flex items-center justify-center gap-2 text-sm"
+          onClick={signOut}
+          data-testid="cloud-signout-button"
+        >
+          <LogOut size={16} />
+          Sign out
+        </Button>
+      </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div data-testid="cloud-signed-out">
+    <Card className="space-y-4">
+      <div className="flex items-center gap-2">
+        <CloudOff size={18} className="text-nook-ink/40" />
+        <span className="text-sm font-bold text-nook-ink">Cloud Backup</span>
+      </div>
+
+      <p className="text-xs text-nook-ink/50">
+        Sign in to automatically back up your data and access it from any device.
+      </p>
+
+      {/* Mode toggle */}
+      <div className="flex rounded-xl overflow-hidden border border-nook-ink/10">
+        <button
+          className={cn(
+            'flex-1 py-2 text-xs font-bold transition-colors',
+            mode === 'signin'
+              ? 'bg-nook-ink text-white'
+              : 'bg-transparent text-nook-ink/50 hover:text-nook-ink'
+          )}
+          onClick={() => { setMode('signin'); setAuthError(null); }}
+          data-testid="cloud-mode-signin"
+        >
+          Sign in
+        </button>
+        <button
+          className={cn(
+            'flex-1 py-2 text-xs font-bold transition-colors',
+            mode === 'signup'
+              ? 'bg-nook-ink text-white'
+              : 'bg-transparent text-nook-ink/50 hover:text-nook-ink'
+          )}
+          onClick={() => { setMode('signup'); setAuthError(null); }}
+          data-testid="cloud-mode-signup"
+        >
+          Create account
+        </button>
+      </div>
+
+      {/* Fields */}
+      <div className="space-y-2">
+        <input
+          type="email"
+          placeholder="Email"
+          value={email}
+          onChange={e => setEmail(e.target.value)}
+          className="w-full px-4 py-2.5 rounded-xl border border-nook-ink/10 bg-white text-sm text-nook-ink placeholder-nook-ink/30 focus:outline-none focus:ring-2 focus:ring-nook-ink/20"
+          data-testid="cloud-email-input"
+          autoComplete="email"
+        />
+        <input
+          type="password"
+          placeholder="Password"
+          value={password}
+          onChange={e => setPassword(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') handleAuth(); }}
+          className="w-full px-4 py-2.5 rounded-xl border border-nook-ink/10 bg-white text-sm text-nook-ink placeholder-nook-ink/30 focus:outline-none focus:ring-2 focus:ring-nook-ink/20"
+          data-testid="cloud-password-input"
+          autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+        />
+      </div>
+
+      {authError && (
+        <p className="text-xs text-red-600" role="alert" data-testid="cloud-auth-error">{authError}</p>
+      )}
+
+      <Button
+        className="w-full py-3 flex items-center justify-center gap-2 text-sm"
+        onClick={handleAuth}
+        disabled={authLoading}
+        data-testid="cloud-auth-button"
+      >
+        {authLoading
+          ? <Loader2 size={16} className="animate-spin" />
+          : mode === 'signin' ? <LogIn size={16} /> : <UserPlus size={16} />
+        }
+        {authLoading ? 'Please wait…' : mode === 'signin' ? 'Sign in' : 'Create account'}
+      </Button>
+    </Card>
+    </div>
+  );
+};
+
+// ─── SettingsView ──────────────────────────────────────────────────────────────
 
 export const SettingsView: React.FC<SettingsViewProps> = ({ onBack }) => {
   const [lastExport, setLastExport] = useState<Date | null>(getLastExportDate);
@@ -158,7 +334,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onBack }) => {
         </div>
       )}
 
-      {/* Backup section */}
+      {/* Cloud Backup section */}
+      <section className="space-y-4">
+        <h2 className="text-xs font-bold uppercase tracking-widest text-nook-ink/40 px-1">Cloud Backup</h2>
+        <CloudBackupCard />
+      </section>
+
+      {/* JSON Backup section */}
       <section className="space-y-4">
         <h2 className="text-xs font-bold uppercase tracking-widest text-nook-ink/40 px-1">Data Backup</h2>
 

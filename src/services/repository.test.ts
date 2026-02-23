@@ -1,11 +1,32 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { repository } from './repository';
 import { db } from '../db';
 
-// Clear all tables before each test for full isolation
+// ─── Mock firebaseService ─────────────────────────────────────────────────────
+// Sync calls must never interfere with local DB tests, and must never throw.
+
+const { mockSyncUpsertTask, mockSyncDeleteTask, mockSyncUpsertBucket, mockSyncDeleteBucket } =
+  vi.hoisted(() => ({
+    mockSyncUpsertTask: vi.fn(async () => {}),
+    mockSyncDeleteTask: vi.fn(async () => {}),
+    mockSyncUpsertBucket: vi.fn(async () => {}),
+    mockSyncDeleteBucket: vi.fn(async () => {}),
+  }));
+
+vi.mock('./firebaseService', () => ({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  syncUpsertTask: (task: unknown) => (mockSyncUpsertTask as any)(task),
+  syncDeleteTask: (id: unknown) => (mockSyncDeleteTask as any)(id),
+  syncUpsertBucket: (bucket: unknown) => (mockSyncUpsertBucket as any)(bucket),
+  syncDeleteBucket: (id: unknown) => (mockSyncDeleteBucket as any)(id),
+}));
+
+// ─── Setup ────────────────────────────────────────────────────────────────────
+
 beforeEach(async () => {
   await db.tasks.clear();
   await db.buckets.clear();
+  vi.clearAllMocks();
 });
 
 // ─── Bucket Tests ────────────────────────────────────────────────────────────
@@ -47,9 +68,7 @@ describe('repository: buckets', () => {
     const bucketId = await repository.addBucket({ name: 'Work', emoji: '💼' });
     await repository.addTask({ title: 'Task A', bucketId, status: 'todo', isUrgent: false, isImportant: false });
     await repository.addTask({ title: 'Task B', bucketId, status: 'todo', isUrgent: false, isImportant: false });
-
     await repository.deleteBucket(bucketId);
-
     const tasks = await repository.getAllTasks();
     expect(tasks).toHaveLength(2);
     expect(tasks[0].bucketId).toBeUndefined();
@@ -60,11 +79,41 @@ describe('repository: buckets', () => {
     const bucketA = await repository.addBucket({ name: 'A', emoji: '🅰️' });
     const bucketB = await repository.addBucket({ name: 'B', emoji: '🅱️' });
     await repository.addTask({ title: 'Task in B', bucketId: bucketB, status: 'todo', isUrgent: false, isImportant: false });
-
     await repository.deleteBucket(bucketA);
-
     const tasks = await repository.getAllTasks();
     expect(tasks[0].bucketId).toBe(bucketB);
+  });
+
+  // ─── Sync call verification ───────────────────────────────────────────────
+
+  it('addBucket calls syncUpsertBucket with the saved bucket', async () => {
+    const id = await repository.addBucket({ name: 'Sync Test', emoji: '🔁' });
+    expect(mockSyncUpsertBucket).toHaveBeenCalledOnce();
+    expect(mockSyncUpsertBucket).toHaveBeenCalledWith(expect.objectContaining({ id, name: 'Sync Test' }));
+  });
+
+  it('updateBucket calls syncUpsertBucket with updated data', async () => {
+    const id = await repository.addBucket({ name: 'Before', emoji: '📁' });
+    vi.clearAllMocks();
+    await repository.updateBucket(id, { name: 'After' });
+    expect(mockSyncUpsertBucket).toHaveBeenCalledOnce();
+    expect(mockSyncUpsertBucket).toHaveBeenCalledWith(expect.objectContaining({ id, name: 'After' }));
+  });
+
+  it('deleteBucket calls syncDeleteBucket with the bucket id', async () => {
+    const id = await repository.addBucket({ name: 'Gone', emoji: '👋' });
+    vi.clearAllMocks();
+    await repository.deleteBucket(id);
+    expect(mockSyncDeleteBucket).toHaveBeenCalledOnce();
+    expect(mockSyncDeleteBucket).toHaveBeenCalledWith(id);
+  });
+
+  it('local write still succeeds when syncUpsertBucket rejects', async () => {
+    mockSyncUpsertBucket.mockRejectedValueOnce(new Error('network error'));
+    const id = await repository.addBucket({ name: 'Resilient', emoji: '💪' });
+    const buckets = await repository.getAllBuckets();
+    expect(buckets).toHaveLength(1);
+    expect(buckets[0].id).toBe(id);
   });
 });
 
@@ -108,7 +157,6 @@ describe('repository: tasks', () => {
     const bucketB = await repository.addBucket({ name: 'B', emoji: '🅱️' });
     await repository.addTask({ title: 'Task in A', bucketId: bucketA, status: 'todo', isUrgent: false, isImportant: false });
     await repository.addTask({ title: 'Task in B', bucketId: bucketB, status: 'todo', isUrgent: false, isImportant: false });
-
     const tasksInA = await repository.getTasksByBucket(bucketA);
     expect(tasksInA).toHaveLength(1);
     expect(tasksInA[0].title).toBe('Task in A');
@@ -168,6 +216,46 @@ describe('repository: tasks', () => {
     expect(tasks).toHaveLength(1);
     expect(tasks[0].id).toBe(id1);
   });
+
+  // ─── Sync call verification ───────────────────────────────────────────────
+
+  it('addTask calls syncUpsertTask with the saved task', async () => {
+    const id = await repository.addTask({ title: 'Sync me', status: 'todo', isUrgent: false, isImportant: false });
+    expect(mockSyncUpsertTask).toHaveBeenCalledOnce();
+    expect(mockSyncUpsertTask).toHaveBeenCalledWith(expect.objectContaining({ id, title: 'Sync me' }));
+  });
+
+  it('updateTask calls syncUpsertTask with updated data', async () => {
+    const id = await repository.addTask({ title: 'Before', status: 'todo', isUrgent: false, isImportant: false });
+    vi.clearAllMocks();
+    await repository.updateTask(id, { title: 'After' });
+    expect(mockSyncUpsertTask).toHaveBeenCalledOnce();
+    expect(mockSyncUpsertTask).toHaveBeenCalledWith(expect.objectContaining({ id, title: 'After' }));
+  });
+
+  it('deleteTask calls syncDeleteTask with the task id', async () => {
+    const id = await repository.addTask({ title: 'Gone', status: 'todo', isUrgent: false, isImportant: false });
+    vi.clearAllMocks();
+    await repository.deleteTask(id);
+    expect(mockSyncDeleteTask).toHaveBeenCalledOnce();
+    expect(mockSyncDeleteTask).toHaveBeenCalledWith(id);
+  });
+
+  it('local write still succeeds when syncUpsertTask rejects', async () => {
+    mockSyncUpsertTask.mockRejectedValueOnce(new Error('network error'));
+    const id = await repository.addTask({ title: 'Resilient', status: 'todo', isUrgent: false, isImportant: false });
+    const tasks = await repository.getAllTasks();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].id).toBe(id);
+  });
+
+  it('local write still succeeds when syncDeleteTask rejects', async () => {
+    const id = await repository.addTask({ title: 'Delete resilient', status: 'todo', isUrgent: false, isImportant: false });
+    mockSyncDeleteTask.mockRejectedValueOnce(new Error('network error'));
+    await repository.deleteTask(id);
+    const tasks = await repository.getAllTasks();
+    expect(tasks).toHaveLength(0);
+  });
 });
 
 // ─── Seed Tests ───────────────────────────────────────────────────────────────
@@ -185,7 +273,6 @@ describe('repository: seedIfEmpty', () => {
     await repository.addBucket({ name: 'Existing', emoji: '✅' });
     await repository.seedIfEmpty();
     const buckets = await repository.getAllBuckets();
-    // Should still only be 1 — seed was skipped
     expect(buckets).toHaveLength(1);
   });
 

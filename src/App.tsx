@@ -6,6 +6,7 @@ import { TasksView } from './views/TasksView';
 import { CalendarView } from './views/CalendarView';
 import { SettingsView } from './views/SettingsView';
 import { motion, AnimatePresence } from 'motion/react';
+import { useAuth } from './context/AuthContext';
 
 type AppView = TabType | 'settings';
 
@@ -13,6 +14,7 @@ export default function App() {
   const [activeView, setActiveView] = useState<AppView>('home');
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
+  const { authLoading } = useAuth();
 
   useEffect(() => {
     const init = async () => {
@@ -31,7 +33,7 @@ export default function App() {
     setActiveView('settings');
   };
 
-  if (!isInitialized) {
+  if (!isInitialized || authLoading) {
     return (
       <div className="fixed inset-0 flex items-center justify-center bg-warm-bg">
         <div className="text-center space-y-4">
