@@ -1,5 +1,12 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import {
+  getAuth,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signOut as firebaseSignOut,
+  onAuthStateChanged,
+  type User,
+} from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
@@ -16,3 +23,16 @@ const app = initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
 export const firestore = getFirestore(app);
+
+// ─── Auth helpers ─────────────────────────────────────────────────────────────
+
+export const signUpWithEmail = (email: string, password: string) =>
+  createUserWithEmailAndPassword(auth, email, password);
+
+export const signInWithEmail = (email: string, password: string) =>
+  signInWithEmailAndPassword(auth, email, password);
+
+export const signOutUser = () => firebaseSignOut(auth);
+
+export const onAuthChange = (callback: (user: User | null) => void) =>
+  onAuthStateChanged(auth, callback);

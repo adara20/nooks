@@ -4,10 +4,18 @@ import userEvent from '@testing-library/user-event';
 import App from './App';
 import { repository } from './services/repository';
 
+// ─── Mocks ────────────────────────────────────────────────────────────────────
+
 vi.mock('./services/repository', () => ({
   repository: {
     seedIfEmpty: vi.fn(async () => {}),
   },
+}));
+
+// Mock AuthContext so App doesn't need a real Firebase connection
+vi.mock('./context/AuthContext', () => ({
+  useAuth: () => ({ authLoading: false }),
+  AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
 vi.mock('./views/HomeView', () => ({
@@ -57,6 +65,8 @@ vi.mock('motion/react', () => ({
   AnimatePresence: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
+// ─── Setup ────────────────────────────────────────────────────────────────────
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(repository.seedIfEmpty).mockResolvedValue(undefined);
@@ -69,10 +79,11 @@ async function renderApp() {
   });
 }
 
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
 describe('App', () => {
   describe('initialisation', () => {
     it('shows loading spinner before seed completes', () => {
-      // Never resolves — stays in loading state
       vi.mocked(repository.seedIfEmpty).mockReturnValue(new Promise(() => {}));
       render(<App />);
       expect(screen.getByText('Finding your nooks...')).toBeInTheDocument();
@@ -86,6 +97,16 @@ describe('App', () => {
     it('calls seedIfEmpty exactly once on mount', async () => {
       await renderApp();
       expect(repository.seedIfEmpty).toHaveBeenCalledOnce();
+    });
+
+    it('shows loading spinner while authLoading is true', () => {
+      vi.doMock('./context/AuthContext', () => ({
+        useAuth: () => ({ authLoading: true }),
+        AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+      }));
+      vi.mocked(repository.seedIfEmpty).mockResolvedValue(undefined);
+      render(<App />);
+      expect(screen.getByText('Finding your nooks...')).toBeInTheDocument();
     });
   });
 
