@@ -82,9 +82,10 @@ Data resilience is handled client-side via a manual JSON backup flow:
 
 ## 6. Testing Philosophy
 - **Unit Tests**: Located next to the source file (e.g., `nudgeService.test.ts`). Focus on pure logic.
+- **Integration/View Tests**: Also located next to the source file (e.g., `HomeView.test.tsx`). Test rendered behaviour, user interactions, and navigation wiring using React Testing Library. `dexie-react-hooks`, `motion/react`, and `services/repository` are mocked so tests run without a real DB or animation engine.
 - **Test Setup**: `src/tests/setup.ts` — provides a fresh `fake-indexeddb` instance before each test.
 - **Factories**: `src/tests/factories.ts` — always use factories to generate mock data. Never hardcode objects in tests.
-- **Coverage Target**: >85% overall, >80% for any modified file.
+- **Coverage Target**: >85% overall, >80% for any modified file. All views (`App.tsx`, `HomeView`, `TasksView`, `CalendarView`) are covered at ≥90% statement coverage.
 
 ## 7. Maintenance Rules
 - **Schema Changes**: If you update `db.ts` or the types in `db.ts`, you MUST update this document.
