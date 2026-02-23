@@ -1,21 +1,40 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, act, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AuthProvider, useAuth } from './AuthContext';
 
-// ─── Mock firebaseService ─────────────────────────────────────────────────────
+// ─── Hoisted mock functions ───────────────────────────────────────────────────
 
-const mockOnAuthChange = vi.fn();
-const mockSignInWithEmail = vi.fn();
-const mockSignUpWithEmail = vi.fn();
-const mockSignOutUser = vi.fn();
+const {
+  mockOnAuthChange,
+  mockSignInWithEmail,
+  mockSignUpWithEmail,
+  mockSignOutUser,
+  mockRunInitialSync,
+} = vi.hoisted(() => ({
+  mockOnAuthChange: vi.fn(),
+  mockSignInWithEmail: vi.fn(),
+  mockSignUpWithEmail: vi.fn(),
+  mockSignOutUser: vi.fn(),
+  mockRunInitialSync: vi.fn(),
+}));
 
 vi.mock('../services/firebaseService', () => ({
   onAuthChange: (cb: (user: unknown) => void) => mockOnAuthChange(cb),
-  signInWithEmail: (...args: unknown[]) => mockSignInWithEmail(...args),
-  signUpWithEmail: (...args: unknown[]) => mockSignUpWithEmail(...args),
+  signInWithEmail: (email: string, password: string) => mockSignInWithEmail(email, password),
+  signUpWithEmail: (email: string, password: string) => mockSignUpWithEmail(email, password),
   signOutUser: () => mockSignOutUser(),
+  runInitialSync: (uid: string, callbacks: unknown) => mockRunInitialSync(uid, callbacks),
+}));
+
+vi.mock('../services/repository', () => ({
+  repository: {
+    getAllBuckets: vi.fn(async () => []),
+    getAllTasks: vi.fn(async () => []),
+    addBucket: vi.fn(async () => 1),
+    addTask: vi.fn(async () => 1),
+  },
 }));
 
 // ─── Test consumer component ──────────────────────────────────────────────────
@@ -53,6 +72,7 @@ describe('AuthContext', () => {
     mockSignInWithEmail.mockResolvedValue({});
     mockSignUpWithEmail.mockResolvedValue({});
     mockSignOutUser.mockResolvedValue(undefined);
+    mockRunInitialSync.mockResolvedValue(undefined);
   });
 
   it('authLoading is true before onAuthStateChanged fires', () => {
@@ -83,8 +103,8 @@ describe('AuthContext', () => {
   });
 
   it('isSignedIn is true when user is present', async () => {
-    mockOnAuthChange.mockImplementation((cb: (u: { email: string }) => void) => {
-      cb({ email: 'test@test.com' });
+    mockOnAuthChange.mockImplementation((cb: (u: { email: string; uid: string }) => void) => {
+      cb({ email: 'test@test.com', uid: 'uid-1' });
       return vi.fn();
     });
     renderWithAuth();
@@ -158,6 +178,76 @@ describe('AuthContext', () => {
     renderWithAuth();
     await waitFor(() => {
       expect(screen.getByTestId('sync-status').textContent).toBe('idle');
+    });
+  });
+
+  // ─── Initial sync tests ──────────────────────────────────────────────────────
+
+  describe('initial sync on sign-in', () => {
+    it('calls runInitialSync with the signed-in user uid', async () => {
+      mockOnAuthChange.mockImplementation((cb: (u: { uid: string; email: string }) => void) => {
+        cb({ uid: 'uid-abc', email: 'user@test.com' });
+        return vi.fn();
+      });
+      renderWithAuth();
+      await waitFor(() => {
+        expect(mockRunInitialSync).toHaveBeenCalledWith('uid-abc', expect.any(Object));
+      });
+    });
+
+    it('sets syncStatus to syncing then synced on success', async () => {
+      mockOnAuthChange.mockImplementation((cb: (u: { uid: string; email: string }) => void) => {
+        cb({ uid: 'uid-abc', email: 'user@test.com' });
+        return vi.fn();
+      });
+      renderWithAuth();
+      await waitFor(() => {
+        expect(screen.getByTestId('sync-status').textContent).toBe('synced');
+      });
+    });
+
+    it('sets syncStatus to error when runInitialSync rejects', async () => {
+      mockRunInitialSync.mockRejectedValue(new Error('network error'));
+      mockOnAuthChange.mockImplementation((cb: (u: { uid: string; email: string }) => void) => {
+        cb({ uid: 'uid-abc', email: 'user@test.com' });
+        return vi.fn();
+      });
+      const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      renderWithAuth();
+      await waitFor(() => {
+        expect(screen.getByTestId('sync-status').textContent).toBe('error');
+      });
+      consoleWarn.mockRestore();
+    });
+
+    it('does not call runInitialSync when user is null', async () => {
+      mockOnAuthChange.mockImplementation((cb: (u: null) => void) => {
+        cb(null);
+        return vi.fn();
+      });
+      renderWithAuth();
+      await waitFor(() => {
+        expect(screen.getByTestId('loading').textContent).toBe('false');
+      });
+      expect(mockRunInitialSync).not.toHaveBeenCalled();
+    });
+
+    it('does not call runInitialSync twice for the same uid', async () => {
+      let capturedCb: ((u: { uid: string; email: string } | null) => void) | null = null;
+      mockOnAuthChange.mockImplementation((cb: (u: { uid: string; email: string } | null) => void) => {
+        capturedCb = cb;
+        cb({ uid: 'uid-abc', email: 'user@test.com' });
+        return vi.fn();
+      });
+      renderWithAuth();
+      await waitFor(() => {
+        expect(mockRunInitialSync).toHaveBeenCalledOnce();
+      });
+      // Fire the auth change again with the same uid
+      capturedCb!({ uid: 'uid-abc', email: 'user@test.com' });
+      await waitFor(() => {
+        expect(mockRunInitialSync).toHaveBeenCalledOnce(); // still only once
+      });
     });
   });
 });

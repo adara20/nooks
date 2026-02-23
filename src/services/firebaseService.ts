@@ -12,6 +12,8 @@ import {
   doc,
   setDoc,
   deleteDoc,
+  getDocs,
+  collection,
   Timestamp,
 } from 'firebase/firestore';
 import { type Task, type Bucket } from '../db';
@@ -125,4 +127,112 @@ export async function syncDeleteBucket(bucketId: number): Promise<void> {
   } catch (err) {
     console.warn('[firebaseService] syncDeleteBucket failed:', err);
   }
+}
+
+// ─── Deserialisation helpers ──────────────────────────────────────────────────
+
+/** Convert a Firestore Timestamp (or null) back to a JS Date. */
+function fromTimestamp(value: unknown): Date | undefined {
+  if (!value) return undefined;
+  if (value instanceof Timestamp) return value.toDate();
+  return undefined;
+}
+
+/** Deserialise a raw Firestore document back into a Task. */
+function deserialiseTask(data: Record<string, unknown>): Task {
+  return {
+    id: typeof data.id === 'number' ? data.id : undefined,
+    title: String(data.title ?? ''),
+    details: typeof data.details === 'string' ? data.details : undefined,
+    bucketId: typeof data.bucketId === 'number' ? data.bucketId : undefined,
+    status: (data.status as Task['status']) ?? 'todo',
+    isUrgent: Boolean(data.isUrgent),
+    isImportant: Boolean(data.isImportant),
+    dueDate: fromTimestamp(data.dueDate),
+    createdAt: fromTimestamp(data.createdAt) ?? new Date(),
+    completedAt: fromTimestamp(data.completedAt),
+  };
+}
+
+/** Deserialise a raw Firestore document back into a Bucket. */
+function deserialiseBucket(data: Record<string, unknown>): Bucket {
+  return {
+    id: typeof data.id === 'number' ? data.id : undefined,
+    name: String(data.name ?? ''),
+    emoji: String(data.emoji ?? ''),
+    createdAt: fromTimestamp(data.createdAt) ?? new Date(),
+  };
+}
+
+// ─── Initial sync helpers ─────────────────────────────────────────────────────
+
+/** Fetch all tasks and buckets stored under a user's Firestore subtree. */
+export async function fetchCloudData(uid: string): Promise<{ buckets: Bucket[]; tasks: Task[] }> {
+  const [bucketsSnap, tasksSnap] = await Promise.all([
+    getDocs(collection(firestore, `users/${uid}/buckets`)),
+    getDocs(collection(firestore, `users/${uid}/tasks`)),
+  ]);
+  const buckets = bucketsSnap.docs.map(d => deserialiseBucket(d.data() as Record<string, unknown>));
+  const tasks = tasksSnap.docs.map(d => deserialiseTask(d.data() as Record<string, unknown>));
+  return { buckets, tasks };
+}
+
+/** Write every local task and bucket up to Firestore (used after merge to push net-new items). */
+export async function pushAllToCloud(
+  uid: string,
+  tasks: Task[],
+  buckets: Bucket[]
+): Promise<void> {
+  await Promise.all([
+    ...buckets
+      .filter(b => b.id != null)
+      .map(b =>
+        setDoc(doc(firestore, `users/${uid}/buckets/${b.id}`), serialiseBucket(b))
+      ),
+    ...tasks
+      .filter(t => t.id != null)
+      .map(t =>
+        setDoc(doc(firestore, `users/${uid}/tasks/${t.id}`), serialiseTask(t))
+      ),
+  ]);
+}
+
+/**
+ * Run the one-time merge that happens when a user signs in.
+ *
+ * Strategy:
+ *   1. Fetch cloud data.
+ *   2. Merge cloud→local  (insert cloud items not yet in IndexedDB).
+ *   3. Push the full local store back to Firestore so every device sees
+ *      the union.
+ *
+ * Accepts callbacks so the caller (AuthContext) can drive status transitions
+ * without this module importing React or the repository.
+ */
+export async function runInitialSync(
+  uid: string,
+  callbacks: {
+    getLocalData: () => Promise<{ buckets: Bucket[]; tasks: Task[] }>;
+    insertMergedItems: (items: {
+      buckets: Omit<Bucket, 'id'>[];
+      tasks: Omit<Task, 'id'>[];
+    }) => Promise<void>;
+    getAllLocalData: () => Promise<{ buckets: Bucket[]; tasks: Task[] }>;
+  }
+): Promise<void> {
+  const [cloudData, localData] = await Promise.all([
+    fetchCloudData(uid),
+    callbacks.getLocalData(),
+  ]);
+
+  // Merge cloud items into local (only new items — no overwrites)
+  const { mergeData } = await import('./backupService');
+  const toInsert = mergeData(localData, cloudData);
+  if (toInsert.buckets.length > 0 || toInsert.tasks.length > 0) {
+    await callbacks.insertMergedItems(toInsert);
+  }
+
+  // Push the full updated local store back to Firestore
+  const updatedLocal = await callbacks.getAllLocalData();
+  await pushAllToCloud(uid, updatedLocal.tasks, updatedLocal.buckets);
 }

@@ -1,11 +1,14 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { type User } from 'firebase/auth';
 import {
   onAuthChange,
   signInWithEmail,
   signUpWithEmail,
   signOutUser,
+  runInitialSync,
 } from '../services/firebaseService';
+import { repository } from '../services/repository';
+import { type Bucket, type Task } from '../db';
 
 export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
 
@@ -26,11 +29,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
+  // Track which UIDs we've already synced this session to avoid duplicate merges
+  const syncedUids = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    const unsubscribe = onAuthChange((u) => {
+    const unsubscribe = onAuthChange(async (u) => {
       setUser(u);
       setAuthLoading(false);
+
+      if (u && !syncedUids.current.has(u.uid)) {
+        syncedUids.current.add(u.uid);
+        setSyncStatus('syncing');
+        try {
+          await runInitialSync(u.uid, {
+            getLocalData: async () => {
+              const [buckets, tasks] = await Promise.all([
+                repository.getAllBuckets(),
+                repository.getAllTasks(),
+              ]);
+              return { buckets, tasks };
+            },
+            insertMergedItems: async (items: {
+              buckets: Omit<Bucket, 'id'>[];
+              tasks: Omit<Task, 'id'>[];
+            }) => {
+              for (const bucket of items.buckets) {
+                await repository.addBucket(bucket);
+              }
+              for (const task of items.tasks) {
+                await repository.addTask(task);
+              }
+            },
+            getAllLocalData: async () => {
+              const [buckets, tasks] = await Promise.all([
+                repository.getAllBuckets(),
+                repository.getAllTasks(),
+              ]);
+              return { buckets, tasks };
+            },
+          });
+          setSyncStatus('synced');
+        } catch (err) {
+          console.warn('[AuthContext] runInitialSync failed:', err);
+          setSyncStatus('error');
+        }
+      }
     });
     return unsubscribe;
   }, []);
