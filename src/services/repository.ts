@@ -1,31 +1,41 @@
 import { db, type Bucket, type Task, type TaskStatus } from '../db';
+import {
+  syncUpsertTask,
+  syncDeleteTask,
+  syncUpsertBucket,
+  syncDeleteBucket,
+} from './firebaseService';
 
 class Repository {
-  // Buckets
+  // ─── Buckets ───────────────────────────────────────────────────────────────
+
   async getAllBuckets(): Promise<Bucket[]> {
     return await db.buckets.toArray();
   }
 
   async addBucket(bucket: Omit<Bucket, 'id' | 'createdAt'>): Promise<number> {
-    return await db.buckets.add({
-      ...bucket,
-      createdAt: new Date()
-    });
+    const id = await db.buckets.add({ ...bucket, createdAt: new Date() });
+    const saved = await db.buckets.get(id);
+    if (saved) { try { await syncUpsertBucket(saved); } catch (e) { console.warn("[repository] syncUpsertBucket failed:", e); } }
+    return id;
   }
 
   async updateBucket(id: number, updates: Partial<Bucket>): Promise<void> {
     await db.buckets.update(id, updates);
+    const saved = await db.buckets.get(id);
+    if (saved) { try { await syncUpsertBucket(saved); } catch (e) { console.warn("[repository] syncUpsertBucket failed:", e); } }
   }
 
   async deleteBucket(id: number): Promise<void> {
     await db.transaction('rw', db.buckets, db.tasks, async () => {
       await db.buckets.delete(id);
-      // Instead of deleting tasks, we just remove the bucketId
       await db.tasks.where('bucketId').equals(id).modify({ bucketId: undefined });
     });
+    try { await syncDeleteBucket(id); } catch (e) { console.warn("[repository] syncDeleteBucket failed:", e); }
   }
 
-  // Tasks
+  // ─── Tasks ─────────────────────────────────────────────────────────────────
+
   async getAllTasks(): Promise<Task[]> {
     return await db.tasks.toArray();
   }
@@ -35,10 +45,10 @@ class Repository {
   }
 
   async addTask(task: Omit<Task, 'id' | 'createdAt'>): Promise<number> {
-    return await db.tasks.add({
-      ...task,
-      createdAt: new Date()
-    });
+    const id = await db.tasks.add({ ...task, createdAt: new Date() });
+    const saved = await db.tasks.get(id);
+    if (saved) { try { await syncUpsertTask(saved); } catch (e) { console.warn("[repository] syncUpsertTask failed:", e); } }
+    return id;
   }
 
   async updateTask(id: number, updates: Partial<Task>): Promise<void> {
@@ -48,13 +58,17 @@ class Repository {
       updates.completedAt = undefined;
     }
     await db.tasks.update(id, updates);
+    const saved = await db.tasks.get(id);
+    if (saved) { try { await syncUpsertTask(saved); } catch (e) { console.warn("[repository] syncUpsertTask failed:", e); } }
   }
 
   async deleteTask(id: number): Promise<void> {
     await db.tasks.delete(id);
+    try { await syncDeleteTask(id); } catch (e) { console.warn("[repository] syncDeleteTask failed:", e); }
   }
 
-  // Seed Data
+  // ─── Seed data ─────────────────────────────────────────────────────────────
+
   async seedIfEmpty() {
     const bucketCount = await db.buckets.count();
     if (bucketCount === 0) {
@@ -68,7 +82,7 @@ class Repository {
         status: 'todo',
         isUrgent: true,
         isImportant: true,
-        details: 'Don\'t forget the ferns in the corner.'
+        details: "Don't forget the ferns in the corner.",
       });
 
       await this.addTask({
@@ -77,7 +91,7 @@ class Repository {
         status: 'in-progress',
         isUrgent: false,
         isImportant: true,
-        dueDate: new Date()
+        dueDate: new Date(),
       });
 
       await this.addTask({
@@ -85,7 +99,7 @@ class Repository {
         bucketId: learningId,
         status: 'todo',
         isUrgent: false,
-        isImportant: false
+        isImportant: false,
       });
     }
   }
