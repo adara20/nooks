@@ -6,7 +6,29 @@ import * as backupService from '../services/backupService';
 import * as repository from '../services/repository';
 import { db } from '../db';
 
-// Mock the modules that touch the real filesystem / DOM download
+// ─── Hoisted mock functions ───────────────────────────────────────────────────
+
+const { mockSignIn, mockSignUp, mockSignOut } = vi.hoisted(() => ({
+  mockSignIn: vi.fn(),
+  mockSignUp: vi.fn(),
+  mockSignOut: vi.fn(),
+}));
+
+// ─── Mock AuthContext (default: signed out) ───────────────────────────────────
+
+vi.mock('../context/AuthContext', () => ({
+  useAuth: () => ({
+    user: null,
+    isSignedIn: false,
+    syncStatus: 'idle' as const,
+    signIn: mockSignIn,
+    signUp: mockSignUp,
+    signOut: mockSignOut,
+  }),
+}));
+
+// ─── Mock backup service ──────────────────────────────────────────────────────
+
 vi.mock('../services/backupService', async (importOriginal) => {
   const actual = await importOriginal<typeof backupService>();
   return {
@@ -41,7 +63,12 @@ const mockOnBack = vi.fn();
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockSignIn.mockResolvedValue(undefined);
+  mockSignUp.mockResolvedValue(undefined);
+  mockSignOut.mockResolvedValue(undefined);
+  vi.mocked(backupService.getLastExportDate).mockReturnValue(null);
 });
+
 
 describe('SettingsView', () => {
   it('renders the Settings header', () => {
@@ -172,6 +199,101 @@ describe('SettingsView', () => {
     await userEvent.click(screen.getByTestId('merge-button'));
     await waitFor(() => {
       expect(screen.getByRole('status')).toBeInTheDocument();
+    });
+  });
+
+  // ─── Cloud Backup Card tests ─────────────────────────────────────────────────
+
+  describe('CloudBackupCard — signed out', () => {
+    it('renders the cloud sign-out panel when not signed in', () => {
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(screen.getByTestId('cloud-signed-out')).toBeInTheDocument();
+    });
+
+    it('shows sign-in mode by default', () => {
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(screen.getByTestId('cloud-auth-button')).toHaveTextContent(/sign in/i);
+    });
+
+    it('switches to create account mode when toggled', async () => {
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.click(screen.getByTestId('cloud-mode-signup'));
+      expect(screen.getByTestId('cloud-auth-button')).toHaveTextContent(/create account/i);
+    });
+
+    it('calls signIn with email and password on submit', async () => {
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.type(screen.getByTestId('cloud-email-input'), 'test@test.com');
+      await userEvent.type(screen.getByTestId('cloud-password-input'), 'password123');
+      await userEvent.click(screen.getByTestId('cloud-auth-button'));
+      await waitFor(() => {
+        expect(mockSignIn).toHaveBeenCalledWith('test@test.com', 'password123');
+      });
+    });
+
+    it('calls signUp when in create-account mode', async () => {
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.click(screen.getByTestId('cloud-mode-signup'));
+      await userEvent.type(screen.getByTestId('cloud-email-input'), 'new@test.com');
+      await userEvent.type(screen.getByTestId('cloud-password-input'), 'password123');
+      await userEvent.click(screen.getByTestId('cloud-auth-button'));
+      await waitFor(() => {
+        expect(mockSignUp).toHaveBeenCalledWith('new@test.com', 'password123');
+      });
+    });
+
+    it('shows validation error when fields are empty', async () => {
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.click(screen.getByTestId('cloud-auth-button'));
+      await waitFor(() => {
+        expect(screen.getByTestId('cloud-auth-error')).toBeInTheDocument();
+      });
+    });
+
+    it('shows friendly error for wrong password', async () => {
+      mockSignIn.mockRejectedValue(new Error('auth/invalid-credential'));
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.type(screen.getByTestId('cloud-email-input'), 'test@test.com');
+      await userEvent.type(screen.getByTestId('cloud-password-input'), 'wrong');
+      await userEvent.click(screen.getByTestId('cloud-auth-button'));
+      await waitFor(() => {
+        expect(screen.getByTestId('cloud-auth-error')).toHaveTextContent(/incorrect email or password/i);
+      });
+    });
+
+    it('shows friendly error for email-already-in-use', async () => {
+      mockSignUp.mockRejectedValue(new Error('auth/email-already-in-use'));
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.click(screen.getByTestId('cloud-mode-signup'));
+      await userEvent.type(screen.getByTestId('cloud-email-input'), 'taken@test.com');
+      await userEvent.type(screen.getByTestId('cloud-password-input'), 'pass123');
+      await userEvent.click(screen.getByTestId('cloud-auth-button'));
+      await waitFor(() => {
+        expect(screen.getByTestId('cloud-auth-error')).toHaveTextContent(/already exists/i);
+      });
+    });
+
+    it('clears auth error when switching mode', async () => {
+      mockSignIn.mockRejectedValue(new Error('auth/invalid-credential'));
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.type(screen.getByTestId('cloud-email-input'), 'test@test.com');
+      await userEvent.type(screen.getByTestId('cloud-password-input'), 'wrong');
+      await userEvent.click(screen.getByTestId('cloud-auth-button'));
+      await waitFor(() => {
+        expect(screen.getByTestId('cloud-auth-error')).toBeInTheDocument();
+      });
+      await userEvent.click(screen.getByTestId('cloud-mode-signup'));
+      expect(screen.queryByTestId('cloud-auth-error')).not.toBeInTheDocument();
+    });
+
+    it('submits on Enter key in password field', async () => {
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.type(screen.getByTestId('cloud-email-input'), 'test@test.com');
+      await userEvent.type(screen.getByTestId('cloud-password-input'), 'password123');
+      await userEvent.keyboard('{Enter}');
+      await waitFor(() => {
+        expect(mockSignIn).toHaveBeenCalledWith('test@test.com', 'password123');
+      });
     });
   });
 });
