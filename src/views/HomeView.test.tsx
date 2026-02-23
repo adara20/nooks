@@ -10,9 +10,10 @@ vi.mock('dexie-react-hooks', () => ({
 }));
 
 // Mock nudgeService so we control nudge output directly
-const mockGenerateNudges = vi.fn(() => [] as ReturnType<typeof import('../services/nudgeService').generateNudges>);
+import type { Nudge } from '../services/nudgeService';
+const mockGenerateNudges = vi.fn((_tasks?: unknown, _date?: unknown): Nudge[] => []);
 vi.mock('../services/nudgeService', () => ({
-  generateNudges: (...args: unknown[]) => mockGenerateNudges(...args),
+  generateNudges: (...args: Parameters<typeof import("../services/nudgeService").generateNudges>) => mockGenerateNudges(...args),
 }));
 
 vi.mock('../services/backupService', () => ({
