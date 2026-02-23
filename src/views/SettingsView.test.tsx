@@ -8,23 +8,17 @@ import { db } from '../db';
 
 // ─── Hoisted mock functions ───────────────────────────────────────────────────
 
-const { mockSignIn, mockSignUp, mockSignOut } = vi.hoisted(() => ({
+const { mockUseAuth, mockSignIn, mockSignUp, mockSignOut } = vi.hoisted(() => ({
+  mockUseAuth: vi.fn(),
   mockSignIn: vi.fn(),
   mockSignUp: vi.fn(),
   mockSignOut: vi.fn(),
 }));
 
-// ─── Mock AuthContext (default: signed out) ───────────────────────────────────
+// ─── Mock AuthContext (overridable per-test via mockUseAuth) ──────────────────
 
 vi.mock('../context/AuthContext', () => ({
-  useAuth: () => ({
-    user: null,
-    isSignedIn: false,
-    syncStatus: 'idle' as const,
-    signIn: mockSignIn,
-    signUp: mockSignUp,
-    signOut: mockSignOut,
-  }),
+  useAuth: () => mockUseAuth(),
 }));
 
 // ─── Mock backup service ──────────────────────────────────────────────────────
@@ -61,12 +55,24 @@ vi.mock('../db', () => ({
 
 const mockOnBack = vi.fn();
 
+// Default signed-out state
+const signedOutAuth = {
+  user: null,
+  isSignedIn: false,
+  syncStatus: 'idle' as const,
+  signIn: mockSignIn,
+  signUp: mockSignUp,
+  signOut: mockSignOut,
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockSignIn.mockResolvedValue(undefined);
   mockSignUp.mockResolvedValue(undefined);
   mockSignOut.mockResolvedValue(undefined);
   vi.mocked(backupService.getLastExportDate).mockReturnValue(null);
+  // Default: signed out
+  mockUseAuth.mockReturnValue(signedOutAuth);
 });
 
 
@@ -202,7 +208,7 @@ describe('SettingsView', () => {
     });
   });
 
-  // ─── Cloud Backup Card tests ─────────────────────────────────────────────────
+  // ─── Cloud Backup Card tests — signed out ─────────────────────────────────────
 
   describe('CloudBackupCard — signed out', () => {
     it('renders the cloud sign-out panel when not signed in', () => {
@@ -273,6 +279,40 @@ describe('SettingsView', () => {
       });
     });
 
+    it('shows friendly error for weak-password', async () => {
+      mockSignUp.mockRejectedValue(new Error('auth/weak-password'));
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.click(screen.getByTestId('cloud-mode-signup'));
+      await userEvent.type(screen.getByTestId('cloud-email-input'), 'new@test.com');
+      await userEvent.type(screen.getByTestId('cloud-password-input'), 'abc');
+      await userEvent.click(screen.getByTestId('cloud-auth-button'));
+      await waitFor(() => {
+        expect(screen.getByTestId('cloud-auth-error')).toHaveTextContent(/at least 6 characters/i);
+      });
+    });
+
+    it('shows friendly error for invalid-email', async () => {
+      mockSignIn.mockRejectedValue(new Error('auth/invalid-email'));
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.type(screen.getByTestId('cloud-email-input'), 'notanemail');
+      await userEvent.type(screen.getByTestId('cloud-password-input'), 'password123');
+      await userEvent.click(screen.getByTestId('cloud-auth-button'));
+      await waitFor(() => {
+        expect(screen.getByTestId('cloud-auth-error')).toHaveTextContent(/valid email address/i);
+      });
+    });
+
+    it('shows generic fallback error for unknown errors', async () => {
+      mockSignIn.mockRejectedValue(new Error('some-unknown-error-code'));
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.type(screen.getByTestId('cloud-email-input'), 'test@test.com');
+      await userEvent.type(screen.getByTestId('cloud-password-input'), 'password123');
+      await userEvent.click(screen.getByTestId('cloud-auth-button'));
+      await waitFor(() => {
+        expect(screen.getByTestId('cloud-auth-error')).toHaveTextContent(/something went wrong/i);
+      });
+    });
+
     it('clears auth error when switching mode', async () => {
       mockSignIn.mockRejectedValue(new Error('auth/invalid-credential'));
       render(<SettingsView onBack={mockOnBack} />);
@@ -294,6 +334,68 @@ describe('SettingsView', () => {
       await waitFor(() => {
         expect(mockSignIn).toHaveBeenCalledWith('test@test.com', 'password123');
       });
+    });
+  });
+
+  // ─── Cloud Backup Card tests — signed in ──────────────────────────────────────
+
+  describe('CloudBackupCard — signed in', () => {
+    const signedInAuth = (syncStatus: 'idle' | 'syncing' | 'synced' | 'error' = 'synced') => ({
+      user: { email: 'user@test.com' },
+      isSignedIn: true,
+      syncStatus,
+      signIn: mockSignIn,
+      signUp: mockSignUp,
+      signOut: mockSignOut,
+    });
+
+    it('renders the cloud signed-in panel when signed in', () => {
+      mockUseAuth.mockReturnValue(signedInAuth());
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(screen.getByTestId('cloud-signed-in')).toBeInTheDocument();
+    });
+
+    it('does not render the cloud signed-out panel when signed in', () => {
+      mockUseAuth.mockReturnValue(signedInAuth());
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(screen.queryByTestId('cloud-signed-out')).not.toBeInTheDocument();
+    });
+
+    it('displays the signed-in user email', () => {
+      mockUseAuth.mockReturnValue(signedInAuth());
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(screen.getByTestId('cloud-email')).toHaveTextContent('user@test.com');
+    });
+
+    it('shows "Connected" label when syncStatus is idle', () => {
+      mockUseAuth.mockReturnValue(signedInAuth('idle'));
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(screen.getByText('Connected')).toBeInTheDocument();
+    });
+
+    it('shows "Syncing…" label when syncStatus is syncing', () => {
+      mockUseAuth.mockReturnValue(signedInAuth('syncing'));
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(screen.getByText('Syncing…')).toBeInTheDocument();
+    });
+
+    it('shows "All synced" label when syncStatus is synced', () => {
+      mockUseAuth.mockReturnValue(signedInAuth('synced'));
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(screen.getByText('All synced')).toBeInTheDocument();
+    });
+
+    it('shows "Sync error" label when syncStatus is error', () => {
+      mockUseAuth.mockReturnValue(signedInAuth('error'));
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(screen.getByText('Sync error')).toBeInTheDocument();
+    });
+
+    it('calls signOut when the sign-out button is clicked', async () => {
+      mockUseAuth.mockReturnValue(signedInAuth());
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.click(screen.getByTestId('cloud-signout-button'));
+      expect(mockSignOut).toHaveBeenCalledOnce();
     });
   });
 });
