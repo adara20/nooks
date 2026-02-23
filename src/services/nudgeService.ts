@@ -8,7 +8,7 @@ export interface Nudge {
 
 const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
 
-export function generateNudges(tasks: Task[], lastExportDate: Date | null = null): Nudge[] {
+export function generateNudges(tasks: Task[], lastExportDate: Date | null = null, isSignedIn = false): Nudge[] {
   const nudges: Nudge[] = [];
   const activeTasks = tasks.filter(t => t.status !== 'done' && t.status !== 'backlog');
   const backlogTasks = tasks.filter(t => t.status === 'backlog');
@@ -75,8 +75,9 @@ export function generateNudges(tasks: Task[], lastExportDate: Date | null = null
   }
 
   const backupOverdue =
-    lastExportDate === null ||
-    Date.now() - lastExportDate.getTime() >= THREE_DAYS_MS;
+    !isSignedIn &&
+    (lastExportDate === null ||
+      Date.now() - lastExportDate.getTime() >= THREE_DAYS_MS);
 
   if (backupOverdue) {
     const message =

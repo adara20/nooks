@@ -20,6 +20,10 @@ vi.mock('../services/backupService', () => ({
   getLastExportDate: vi.fn(() => null),
 }));
 
+vi.mock('../context/AuthContext', () => ({
+  useAuth: () => ({ isSignedIn: false }),
+}));
+
 vi.mock('../services/repository', () => ({
   repository: {
     getAllTasks: vi.fn(async () => []),
@@ -248,6 +252,13 @@ describe('HomeView', () => {
       renderHomeView([]);
       await userEvent.click(screen.getByText(/great work/i));
       expect(mockOnNavigateToTasks).toHaveBeenCalledWith('active');
+    });
+
+    it('passes isSignedIn=false to generateNudges when not signed in', () => {
+      renderHomeView([]);
+      expect(mockGenerateNudges).toHaveBeenCalledOnce();
+      const [, , isSignedInArg] = mockGenerateNudges.mock.calls[0];
+      expect(isSignedInArg).toBe(false);
     });
   });
 });

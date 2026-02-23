@@ -123,3 +123,28 @@ describe('generateNudges: backup-overdue nudge', () => {
     expect(nudges.find(n => n.id === 'backup-overdue')).toBeDefined();
   });
 });
+
+describe('generateNudges: backup-overdue suppression when signed in', () => {
+  const activeTasks = [createTask({ status: 'todo' })];
+
+  it('does NOT return backup-overdue when isSignedIn is true and lastExportDate is null', () => {
+    const nudges = generateNudges(activeTasks, null, true);
+    expect(nudges.find(n => n.id === 'backup-overdue')).toBeUndefined();
+  });
+
+  it('does NOT return backup-overdue when isSignedIn is true and export is overdue', () => {
+    const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+    const nudges = generateNudges(activeTasks, fiveDaysAgo, true);
+    expect(nudges.find(n => n.id === 'backup-overdue')).toBeUndefined();
+  });
+
+  it('still returns backup-overdue when isSignedIn is false and export is overdue', () => {
+    const nudges = generateNudges(activeTasks, null, false);
+    expect(nudges.find(n => n.id === 'backup-overdue')).toBeDefined();
+  });
+
+  it('defaults isSignedIn to false (backward compatible)', () => {
+    const nudges = generateNudges(activeTasks, null);
+    expect(nudges.find(n => n.id === 'backup-overdue')).toBeDefined();
+  });
+});

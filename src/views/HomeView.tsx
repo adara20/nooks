@@ -3,6 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { repository } from '../services/repository';
 import { generateNudges } from '../services/nudgeService';
 import { getLastExportDate } from '../services/backupService';
+import { useAuth } from '../context/AuthContext';
 import { Card } from '../components/Card';
 import { motion } from 'motion/react';
 import { Sparkles, Flame, Info, CheckCircle2, Settings } from 'lucide-react';
@@ -16,10 +17,11 @@ interface HomeViewProps {
 export const HomeView: React.FC<HomeViewProps> = ({ onNavigateToTasks, onNavigateToSettings }) => {
   const tasks = useLiveQuery(() => repository.getAllTasks());
   const buckets = useLiveQuery(() => repository.getAllBuckets());
+  const { isSignedIn } = useAuth();
 
   if (!tasks || !buckets) return null;
 
-  const nudges = generateNudges(tasks, getLastExportDate());
+  const nudges = generateNudges(tasks, getLastExportDate(), isSignedIn);
   const activeTasks = tasks.filter(t => t.status !== 'done' && t.status !== 'backlog');
   const doneTasks = tasks.filter(t => t.status === 'done');
   const inProgressTasks = tasks.filter(t => t.status === 'in-progress');
