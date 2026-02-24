@@ -57,6 +57,12 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialStatusFilter, onCle
 
   const filteredTasks = getFilteredTasks();
 
+  const getInitialStatusForFilter = (): TaskStatus => {
+    if (initialStatusFilter === 'backlog') return 'backlog';
+    if (initialStatusFilter === 'in-progress') return 'in-progress';
+    return 'todo';
+  };
+
   const handleToggleStatus = async (task: Task) => {
     const nextStatus: TaskStatus = task.status === 'todo' ? 'in-progress' : 'done';
     await repository.updateTask(task.id!, { status: nextStatus });
@@ -173,13 +179,14 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialStatusFilter, onCle
         }} 
         title={editingTask ? "Edit Task" : "New Task"}
       >
-        <TaskForm 
-          buckets={buckets} 
+        <TaskForm
+          buckets={buckets}
           initialTask={editingTask}
+          initialStatus={editingTask ? undefined : getInitialStatusForFilter()}
           onClose={() => {
             setIsNewTaskModalOpen(false);
             setEditingTask(null);
-          }} 
+          }}
         />
       </Modal>
 
@@ -275,15 +282,16 @@ const QuadrantView: React.FC<{ tasks: Task[], onEdit: (t: Task) => void }> = ({ 
   );
 };
 
-const TaskForm: React.FC<{ 
-  buckets: Bucket[]; 
+const TaskForm: React.FC<{
+  buckets: Bucket[];
   initialTask?: Task | null;
+  initialStatus?: TaskStatus;
   onClose: () => void;
-}> = ({ buckets, initialTask, onClose }) => {
+}> = ({ buckets, initialTask, initialStatus, onClose }) => {
   const [title, setTitle] = useState(initialTask?.title || '');
   const [details, setDetails] = useState(initialTask?.details || '');
   const [bucketId, setBucketId] = useState(initialTask?.bucketId || buckets[0]?.id || undefined);
-  const [status, setStatus] = useState<TaskStatus>(initialTask?.status || 'todo');
+  const [status, setStatus] = useState<TaskStatus>(initialTask?.status || initialStatus || 'todo');
   const [isUrgent, setIsUrgent] = useState(initialTask?.isUrgent || false);
   const [isImportant, setIsImportant] = useState(initialTask?.isImportant || false);
   const [dueDate, setDueDate] = useState(initialTask?.dueDate ? format(initialTask.dueDate, 'yyyy-MM-dd') : '');

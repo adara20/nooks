@@ -335,14 +335,102 @@ describe('TasksView', () => {
       expect(repository.addTask).not.toHaveBeenCalled();
     });
 
-    it('new task defaults to todo status', async () => {
+    it('new task defaults to todo status when no filter is active', async () => {
       setupLiveQuery();
       render(<TasksView />);
       const buttons = screen.getAllByRole('button');
       await userEvent.click(buttons[buttons.length - 1]);
       await waitFor(() => screen.getByText('New Task'));
-      // todo button should be visible in the status selector
-      expect(screen.getByText('todo')).toBeInTheDocument();
+      // The todo status button in the status selector should have the active (orange) style
+      const todoBtn = screen.getByRole('button', { name: /^todo$/i });
+      expect(todoBtn).toHaveClass('bg-nook-orange');
+    });
+
+    it('new task inherits backlog status when backlog filter is active', async () => {
+      setupLiveQuery();
+      render(<TasksView initialStatusFilter="backlog" />);
+      const buttons = screen.getAllByRole('button');
+      await userEvent.click(buttons[buttons.length - 1]);
+      await waitFor(() => screen.getByText('New Task'));
+      // The status selector buttons are inside the modal; find all with matching text and pick the active one
+      const statusBtns = screen.getAllByRole('button', { name: /^backlog$/i });
+      const activeBtn = statusBtns.find(b => b.classList.contains('bg-nook-orange'));
+      expect(activeBtn).toBeDefined();
+    });
+
+    it('new task inherits in-progress status when in-progress filter is active', async () => {
+      setupLiveQuery();
+      render(<TasksView initialStatusFilter="in-progress" />);
+      const buttons = screen.getAllByRole('button');
+      await userEvent.click(buttons[buttons.length - 1]);
+      await waitFor(() => screen.getByText('New Task'));
+      const statusBtns = screen.getAllByRole('button', { name: /^in progress$/i });
+      const activeBtn = statusBtns.find(b => b.classList.contains('bg-nook-orange'));
+      expect(activeBtn).toBeDefined();
+    });
+
+    it('new task defaults to todo when done filter is active', async () => {
+      setupLiveQuery();
+      render(<TasksView initialStatusFilter="done" />);
+      const buttons = screen.getAllByRole('button');
+      await userEvent.click(buttons[buttons.length - 1]);
+      await waitFor(() => screen.getByText('New Task'));
+      const todoBtn = screen.getByRole('button', { name: /^todo$/i });
+      expect(todoBtn).toHaveClass('bg-nook-orange');
+    });
+
+    it('new task defaults to todo when active filter is active', async () => {
+      setupLiveQuery();
+      render(<TasksView initialStatusFilter="active" />);
+      const buttons = screen.getAllByRole('button');
+      await userEvent.click(buttons[buttons.length - 1]);
+      await waitFor(() => screen.getByText('New Task'));
+      const todoBtn = screen.getByRole('button', { name: /^todo$/i });
+      expect(todoBtn).toHaveClass('bg-nook-orange');
+    });
+
+    it('submits task with backlog status when backlog filter is active', async () => {
+      setupLiveQuery([], [createBucket({ id: 1, name: 'Work', emoji: '💼' })]);
+      render(<TasksView initialStatusFilter="backlog" />);
+      const buttons = screen.getAllByRole('button');
+      await userEvent.click(buttons[buttons.length - 1]);
+      await waitFor(() => screen.getByPlaceholderText("What needs doing?"));
+      await userEvent.type(screen.getByPlaceholderText("What needs doing?"), 'Backlog task');
+      await userEvent.click(screen.getByText('Create Task'));
+      await waitFor(() => {
+        expect(repository.addTask).toHaveBeenCalledWith(
+          expect.objectContaining({ title: 'Backlog task', status: 'backlog' })
+        );
+      });
+    });
+
+    it('submits task with in-progress status when in-progress filter is active', async () => {
+      setupLiveQuery([], [createBucket({ id: 1, name: 'Work', emoji: '💼' })]);
+      render(<TasksView initialStatusFilter="in-progress" />);
+      const buttons = screen.getAllByRole('button');
+      await userEvent.click(buttons[buttons.length - 1]);
+      await waitFor(() => screen.getByPlaceholderText("What needs doing?"));
+      await userEvent.type(screen.getByPlaceholderText("What needs doing?"), 'WIP task');
+      await userEvent.click(screen.getByText('Create Task'));
+      await waitFor(() => {
+        expect(repository.addTask).toHaveBeenCalledWith(
+          expect.objectContaining({ title: 'WIP task', status: 'in-progress' })
+        );
+      });
+    });
+
+    it('edit task ignores initialStatus and uses the task own status', async () => {
+      // Use a backlog task so it's visible under the backlog filter
+      const task = createTask({ id: 99, title: 'Existing backlog task', status: 'backlog' });
+      setupLiveQuery([task]);
+      render(<TasksView initialStatusFilter="backlog" />);
+      // Click the task card to open edit modal
+      await userEvent.click(screen.getByText('Existing backlog task'));
+      await waitFor(() => screen.getByText('Edit Task'));
+      // The backlog status button should be active since we're editing an existing backlog task
+      const statusBtns = screen.getAllByRole('button', { name: /^backlog$/i });
+      const activeBtn = statusBtns.find(b => b.classList.contains('bg-nook-orange'));
+      expect(activeBtn).toBeDefined();
     });
   });
 
