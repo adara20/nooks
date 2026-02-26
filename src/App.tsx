@@ -5,8 +5,10 @@ import { HomeView } from './views/HomeView';
 import { TasksView } from './views/TasksView';
 import { CalendarView } from './views/CalendarView';
 import { SettingsView } from './views/SettingsView';
+import { ContributorHomeView } from './views/ContributorHomeView';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from './context/AuthContext';
+import { getAppMode } from './services/contributorService';
 
 type AppView = TabType | 'settings';
 
@@ -14,6 +16,9 @@ export default function App() {
   const [activeView, setActiveView] = useState<AppView>('home');
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
+  // appMode is read from localStorage on mount and updated when the user
+  // switches modes in SettingsView.  It determines which home screen renders.
+  const [appMode, setAppMode] = useState(getAppMode);
   const { authLoading } = useAuth();
 
   useEffect(() => {
@@ -58,11 +63,16 @@ export default function App() {
           exit={{ opacity: 0, y: -10 }}
           transition={{ duration: 0.2 }}
         >
+          {/* Mode-aware home: contributors see their submission list; owners see the full home. */}
           {activeView === 'home' && (
-            <HomeView
-              onNavigateToTasks={navigateToTasks}
-              onNavigateToSettings={navigateToSettings}
-            />
+            appMode === 'contributor' ? (
+              <ContributorHomeView onNavigateToSettings={navigateToSettings} />
+            ) : (
+              <HomeView
+                onNavigateToTasks={navigateToTasks}
+                onNavigateToSettings={navigateToSettings}
+              />
+            )
           )}
           {activeView === 'tasks' && (
             <TasksView
@@ -73,7 +83,10 @@ export default function App() {
           )}
           {activeView === 'calendar' && <CalendarView />}
           {activeView === 'settings' && (
-            <SettingsView onBack={() => setActiveView('home')} />
+            <SettingsView
+              onBack={() => setActiveView('home')}
+              onModeChange={setAppMode}
+            />
           )}
         </motion.div>
       </AnimatePresence>

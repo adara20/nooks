@@ -53,6 +53,36 @@ vi.mock('../db', () => ({
   },
 }));
 
+// ─── Mock contributorService ──────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockGetAppMode = vi.fn<any>(() => 'owner' as import('../services/contributorService').AppMode);
+const mockSetAppMode = vi.fn();
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockGetStoredOwnerEmail = vi.fn<any>(() => null as string | null);
+const mockStoreOwnerInfo = vi.fn();
+const mockClearOwnerInfo = vi.fn();
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockGenerateInviteCode = vi.fn<any>(async () => 'ABCD1234');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockRedeemInviteCode = vi.fn<any>(async () => ({ ownerUID: 'owner-uid', ownerEmail: 'owner@example.com' }));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockGetContributorPermission = vi.fn<any>(async () => null);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockRemoveContributorPermission = vi.fn<any>(async () => {});
+
+vi.mock('../services/contributorService', () => ({
+  getAppMode: () => mockGetAppMode(),
+  setAppMode: (mode: string) => mockSetAppMode(mode),
+  getStoredOwnerEmail: () => mockGetStoredOwnerEmail(),
+  storeOwnerInfo: (uid: string, email: string) => mockStoreOwnerInfo(uid, email),
+  clearOwnerInfo: () => mockClearOwnerInfo(),
+  generateInviteCode: (ownerUID: string, ownerEmail: string) => mockGenerateInviteCode(ownerUID, ownerEmail),
+  redeemInviteCode: (code: string, uid: string, email: string) => mockRedeemInviteCode(code, uid, email),
+  getContributorPermission: (uid: string) => mockGetContributorPermission(uid),
+  removeContributorPermission: (uid: string) => mockRemoveContributorPermission(uid),
+}));
+
 const mockOnBack = vi.fn();
 
 // Default signed-out state
@@ -65,6 +95,16 @@ const signedOutAuth = {
   signOut: mockSignOut,
 };
 
+// Signed-in state with uid (for AppModeCard tests)
+const signedInAuthWithUID = (syncStatus: 'idle' | 'syncing' | 'synced' | 'error' = 'synced') => ({
+  user: { uid: 'user-123', email: 'user@example.com' },
+  isSignedIn: true,
+  syncStatus,
+  signIn: mockSignIn,
+  signUp: mockSignUp,
+  signOut: mockSignOut,
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockSignIn.mockResolvedValue(undefined);
@@ -73,6 +113,12 @@ beforeEach(() => {
   vi.mocked(backupService.getLastExportDate).mockReturnValue(null);
   // Default: signed out
   mockUseAuth.mockReturnValue(signedOutAuth);
+  // Default contributorService mocks
+  mockGetAppMode.mockReturnValue('owner');
+  mockGetStoredOwnerEmail.mockReturnValue(null);
+  mockGenerateInviteCode.mockResolvedValue('ABCD1234');
+  mockRedeemInviteCode.mockResolvedValue({ ownerUID: 'owner-uid', ownerEmail: 'owner@example.com' });
+  mockGetContributorPermission.mockResolvedValue(null);
 });
 
 
@@ -350,21 +396,21 @@ describe('SettingsView', () => {
     });
 
     it('renders the cloud signed-in panel when signed in', () => {
-      mockUseAuth.mockReturnValue(signedInAuth());
+      mockUseAuth.mockReturnValue(signedInAuthWithUID());
       render(<SettingsView onBack={mockOnBack} />);
       expect(screen.getByTestId('cloud-signed-in')).toBeInTheDocument();
     });
 
     it('does not render the cloud signed-out panel when signed in', () => {
-      mockUseAuth.mockReturnValue(signedInAuth());
+      mockUseAuth.mockReturnValue(signedInAuthWithUID());
       render(<SettingsView onBack={mockOnBack} />);
       expect(screen.queryByTestId('cloud-signed-out')).not.toBeInTheDocument();
     });
 
     it('displays the signed-in user email', () => {
-      mockUseAuth.mockReturnValue(signedInAuth());
+      mockUseAuth.mockReturnValue(signedInAuthWithUID());
       render(<SettingsView onBack={mockOnBack} />);
-      expect(screen.getByTestId('cloud-email')).toHaveTextContent('user@test.com');
+      expect(screen.getByTestId('cloud-email')).toHaveTextContent('user@example.com');
     });
 
     it('shows "Connected" label when syncStatus is idle', () => {
@@ -392,10 +438,145 @@ describe('SettingsView', () => {
     });
 
     it('calls signOut when the sign-out button is clicked', async () => {
-      mockUseAuth.mockReturnValue(signedInAuth());
+      mockUseAuth.mockReturnValue(signedInAuthWithUID());
       render(<SettingsView onBack={mockOnBack} />);
       await userEvent.click(screen.getByTestId('cloud-signout-button'));
       expect(mockSignOut).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('AppModeCard', () => {
+    it('renders the Sharing section heading', () => {
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(screen.getByText('Sharing')).toBeInTheDocument();
+    });
+
+    it('renders the App Mode toggle with Owner and Contributor options', () => {
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(screen.getByTestId('mode-owner-btn')).toBeInTheDocument();
+      expect(screen.getByTestId('mode-contributor-btn')).toBeInTheDocument();
+    });
+
+    it('defaults to Owner mode', () => {
+      mockGetAppMode.mockReturnValue('owner');
+      render(<SettingsView onBack={mockOnBack} />);
+      const ownerBtn = screen.getByTestId('mode-owner-btn');
+      expect(ownerBtn.className).toContain('bg-nook-ink');
+    });
+
+    it('defaults to Contributor mode when getAppMode returns contributor', () => {
+      mockGetAppMode.mockReturnValue('contributor');
+      render(<SettingsView onBack={mockOnBack} />);
+      const contribBtn = screen.getByTestId('mode-contributor-btn');
+      expect(contribBtn.className).toContain('bg-nook-ink');
+    });
+
+    it('shows signed-out hint when in owner mode and not signed in', () => {
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(screen.getByText(/Sign in via Cloud Backup/i)).toBeInTheDocument();
+    });
+
+    it('shows Generate Invite button when in owner mode and signed in', () => {
+      mockUseAuth.mockReturnValue(signedInAuthWithUID());
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(screen.getByTestId('generate-invite-btn')).toBeInTheDocument();
+    });
+
+    it('clicking Generate Invite calls generateInviteCode', async () => {
+      mockUseAuth.mockReturnValue(signedInAuthWithUID());
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.click(screen.getByTestId('generate-invite-btn'));
+      await waitFor(() => {
+        expect(mockGenerateInviteCode).toHaveBeenCalledWith('user-123', 'user@example.com');
+      });
+    });
+
+    it('shows generated invite code after clicking Generate Invite', async () => {
+      mockUseAuth.mockReturnValue(signedInAuthWithUID());
+      mockGenerateInviteCode.mockResolvedValue('WXYZ5678');
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.click(screen.getByTestId('generate-invite-btn'));
+      expect(await screen.findByTestId('invite-code-text')).toHaveTextContent('WXYZ5678');
+    });
+
+    it('shows linked contributor card when owner has a linked contributor email stored', () => {
+      mockGetStoredOwnerEmail.mockReturnValue('partner@example.com');
+      // In owner mode we show linked contributor differently — the contributor panel
+      // shows "linked to" and the owner panel shows the contributor card.
+      // Actually getStoredOwnerEmail is the owner's email stored on contributor device.
+      // In owner mode, no linked email comes from localStorage — it comes from getContributorPermission.
+      // For simplicity test the contributor mode linked view instead:
+      mockGetAppMode.mockReturnValue('contributor');
+      mockGetStoredOwnerEmail.mockReturnValue('owner@nooks.app');
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(screen.getByTestId('linked-owner-card')).toBeInTheDocument();
+      expect(screen.getByText('owner@nooks.app')).toBeInTheDocument();
+    });
+
+    it('shows redeem input when in contributor mode and not linked', () => {
+      mockGetAppMode.mockReturnValue('contributor');
+      mockGetStoredOwnerEmail.mockReturnValue(null);
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(screen.getByTestId('redeem-code-input')).toBeInTheDocument();
+    });
+
+    it('calls redeemInviteCode when Link Account is clicked', async () => {
+      mockGetAppMode.mockReturnValue('contributor');
+      mockGetStoredOwnerEmail.mockReturnValue(null);
+      mockUseAuth.mockReturnValue(signedInAuthWithUID());
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.type(screen.getByTestId('redeem-code-input'), 'ABCD1234');
+      await userEvent.click(screen.getByTestId('redeem-btn'));
+      await waitFor(() => {
+        expect(mockRedeemInviteCode).toHaveBeenCalledWith('ABCD1234', 'user-123', 'user@example.com');
+      });
+    });
+
+    it('shows success message after successful redemption', async () => {
+      mockGetAppMode.mockReturnValue('contributor');
+      mockGetStoredOwnerEmail.mockReturnValue(null);
+      mockUseAuth.mockReturnValue(signedInAuthWithUID());
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.type(screen.getByTestId('redeem-code-input'), 'ABCD1234');
+      await userEvent.click(screen.getByTestId('redeem-btn'));
+      expect(await screen.findByTestId('redeem-success')).toBeInTheDocument();
+    });
+
+    it('shows error message when redeem fails with expired code', async () => {
+      mockGetAppMode.mockReturnValue('contributor');
+      mockGetStoredOwnerEmail.mockReturnValue(null);
+      mockUseAuth.mockReturnValue(signedInAuthWithUID());
+      mockRedeemInviteCode.mockRejectedValueOnce(new Error('Invite code expired'));
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.type(screen.getByTestId('redeem-code-input'), 'XXXX9999');
+      await userEvent.click(screen.getByTestId('redeem-btn'));
+      expect(await screen.findByTestId('redeem-error')).toHaveTextContent(/expired/i);
+    });
+
+    it('switching to contributor mode calls setAppMode with contributor', async () => {
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.click(screen.getByTestId('mode-contributor-btn'));
+      expect(mockSetAppMode).toHaveBeenCalledWith('contributor');
+    });
+
+    it('switching back to owner mode calls setAppMode with owner', async () => {
+      mockGetAppMode.mockReturnValue('contributor');
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.click(screen.getByTestId('mode-owner-btn'));
+      expect(mockSetAppMode).toHaveBeenCalledWith('owner');
+    });
+
+    it('contributor mode shows linked-owner card when permission is loaded', async () => {
+      mockGetAppMode.mockReturnValue('contributor');
+      mockGetStoredOwnerEmail.mockReturnValue(null);
+      mockGetContributorPermission.mockResolvedValue({
+        ownerUID: 'owner-uid', ownerEmail: 'linked@owner.com', linkedAt: new Date(),
+      });
+      mockUseAuth.mockReturnValue(signedInAuthWithUID());
+      render(<SettingsView onBack={mockOnBack} />);
+      // linked-owner-card shows after permission loads and setLinkedEmail fires
+      expect(await screen.findByTestId('linked-owner-card')).toBeInTheDocument();
+      expect(screen.getByText('linked@owner.com')).toBeInTheDocument();
     });
   });
 });

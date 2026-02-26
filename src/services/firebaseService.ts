@@ -66,6 +66,9 @@ function serialiseTask(task: Task): Record<string, unknown> {
     dueDate: toTimestamp(task.dueDate),
     createdAt: toTimestamp(task.createdAt),
     completedAt: toTimestamp(task.completedAt),
+    // contributorUID is used by the Firestore security rule that lets a
+    // contributor read the task status of submissions they originally created.
+    contributorUID: task.contributorUID ?? null,
   };
 }
 
@@ -151,6 +154,7 @@ function deserialiseTask(data: Record<string, unknown>): Task {
     dueDate: fromTimestamp(data.dueDate),
     createdAt: fromTimestamp(data.createdAt) ?? new Date(),
     completedAt: fromTimestamp(data.completedAt),
+    contributorUID: typeof data.contributorUID === 'string' ? data.contributorUID : undefined,
   };
 }
 

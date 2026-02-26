@@ -11,7 +11,7 @@ vi.mock('dexie-react-hooks', () => ({
 
 // Mock nudgeService so we control nudge output directly
 import type { Nudge } from '../services/nudgeService';
-const mockGenerateNudges = vi.fn((_tasks?: unknown, _date?: unknown): Nudge[] => []);
+const mockGenerateNudges = vi.fn((_tasks?: unknown, _date?: unknown, _isSignedIn?: unknown, _inboxCount?: unknown): Nudge[] => []);
 vi.mock('../services/nudgeService', () => ({
   generateNudges: (...args: Parameters<typeof import("../services/nudgeService").generateNudges>) => mockGenerateNudges(...args),
 }));
@@ -21,7 +21,12 @@ vi.mock('../services/backupService', () => ({
 }));
 
 vi.mock('../context/AuthContext', () => ({
-  useAuth: () => ({ isSignedIn: false }),
+  useAuth: () => ({ isSignedIn: false, user: null }),
+}));
+
+vi.mock('../services/contributorService', () => ({
+  getPendingInboxCount: vi.fn(async () => 0),
+  getAppMode: vi.fn(() => 'owner'),
 }));
 
 vi.mock('../services/repository', () => ({
@@ -257,8 +262,24 @@ describe('HomeView', () => {
     it('passes isSignedIn=false to generateNudges when not signed in', () => {
       renderHomeView([]);
       expect(mockGenerateNudges).toHaveBeenCalledOnce();
-      const [, , isSignedInArg] = mockGenerateNudges.mock.calls[0];
+      const [, , isSignedInArg] = mockGenerateNudges.mock.calls[0] as [unknown, unknown, boolean, number];
       expect(isSignedInArg).toBe(false);
+    });
+
+    it('inbox-pending nudge click calls onNavigateToTasks with inbox', async () => {
+      mockGenerateNudges.mockReturnValue([
+        { id: 'inbox-pending', message: '💌 2 tasks from your partner are waiting for your review.', type: 'gentle' },
+      ]);
+      renderHomeView([]);
+      await userEvent.click(screen.getByText(/waiting for your review/i));
+      expect(mockOnNavigateToTasks).toHaveBeenCalledWith('inbox');
+    });
+
+    it('passes pendingInboxCount=0 to generateNudges by default', () => {
+      renderHomeView([]);
+      expect(mockGenerateNudges).toHaveBeenCalledOnce();
+      const [, , , inboxCountArg] = mockGenerateNudges.mock.calls[0] as [unknown, unknown, boolean, number];
+      expect(inboxCountArg).toBe(0);
     });
   });
 });
