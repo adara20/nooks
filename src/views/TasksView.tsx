@@ -1,14 +1,21 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { repository } from '../services/repository';
 import { type Task, type Bucket, type TaskStatus } from '../db';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { Modal } from '../components/Modal';
-import { Plus, LayoutGrid, List, Settings2, Trash2, ChevronRight, AlertCircle, Star, X } from 'lucide-react';
+import { Plus, LayoutGrid, List, Settings2, Trash2, ChevronRight, AlertCircle, Star, X, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
 import { cn } from '../utils/cn';
+import {
+  type InboxItem,
+  fetchPendingInboxItems,
+  acceptInboxItem,
+  declineInboxItem,
+} from '../services/contributorService';
+import { useAuth } from '../context/AuthContext';
 
 interface TasksViewProps {
   initialStatusFilter?: string | null;
@@ -19,18 +26,39 @@ interface TasksViewProps {
 export const TasksView: React.FC<TasksViewProps> = ({ initialStatusFilter, onClearFilter, onFilterChange }) => {
   const tasks = useLiveQuery(() => repository.getAllTasks());
   const buckets = useLiveQuery(() => repository.getAllBuckets());
-  
+  const { user } = useAuth();
+
   const [viewMode, setViewMode] = useState<'list' | 'quadrant'>('list');
   const [selectedBucketId, setSelectedBucketId] = useState<number | null>(null);
   const [isNewTaskModalOpen, setIsNewTaskModalOpen] = useState(false);
   const [isBucketModalOpen, setIsBucketModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [inboxItems, setInboxItems] = useState<InboxItem[]>([]);
+  const [inboxLoading, setInboxLoading] = useState(false);
+
+  // 'inbox' is a virtual filter — it renders contributor inbox items instead of local tasks.
+  const isInboxView = initialStatusFilter === 'inbox';
+
+  // Fetch pending inbox items from Firestore when the inbox view is active.
+  // Items live in users/{ownerUID}/inbox and are not stored in local IndexedDB.
+  const userUid = user?.uid;
+  useEffect(() => {
+    if (!isInboxView || !userUid) return;
+    setInboxLoading(true);
+    fetchPendingInboxItems(userUid)
+      .then(setInboxItems)
+      .catch(() => setInboxItems([]))
+      .finally(() => setInboxLoading(false));
+  }, [isInboxView, userUid]);
 
   if (!tasks || !buckets) return null;
 
   const getFilteredTasks = () => {
+    // Inbox items are fetched from Firestore, not the local DB
+    if (isInboxView) return [];
+
     let baseTasks = tasks;
-    
+
     if (initialStatusFilter === 'active') {
       baseTasks = tasks.filter(t => t.status !== 'done' && t.status !== 'backlog');
     } else if (initialStatusFilter === 'done') {
@@ -66,6 +94,36 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialStatusFilter, onCle
   const handleToggleStatus = async (task: Task) => {
     const nextStatus: TaskStatus = task.status === 'todo' ? 'in-progress' : 'done';
     await repository.updateTask(task.id!, { status: nextStatus });
+  };
+
+  /**
+   * Accept a contributor's inbox submission:
+   *  1. Create a local Dexie task (preserving contributorUID so the contributor
+   *     can read live status via the Firestore security rule).
+   *  2. Mark the inbox item as 'accepted' in Firestore and record the new taskId
+   *     so the contributor can poll its status later.
+   *  3. Remove the item from the local inbox list.
+   */
+  const handleAcceptInboxItem = async (item: InboxItem) => {
+    if (!user) return;
+    const taskId = await repository.addTask({
+      title: item.title,
+      details: item.details,
+      isUrgent: item.isUrgent,
+      isImportant: item.isImportant,
+      dueDate: item.dueDate,
+      status: 'todo',
+      contributorUID: item.contributorUID, // stored so Firestore rule can grant contributor read access
+    });
+    await acceptInboxItem(user.uid, item.id, taskId);
+    setInboxItems(prev => prev.filter(i => i.id !== item.id));
+  };
+
+  /** Decline a contributor inbox item and remove it from the local list. */
+  const handleDeclineInboxItem = async (item: InboxItem) => {
+    if (!user) return;
+    await declineInboxItem(user.uid, item.id);
+    setInboxItems(prev => prev.filter(i => i.id !== item.id));
   };
 
   return (
@@ -136,14 +194,38 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialStatusFilter, onCle
       </div>
 
       <div className="px-6 mt-4">
-        {viewMode === 'list' ? (
+        {isInboxView ? (
+          <div className="space-y-3">
+            {inboxLoading ? (
+              <div className="py-20 text-center opacity-40">
+                <p className="font-bold animate-pulse">Loading inbox...</p>
+              </div>
+            ) : inboxItems.length > 0 ? (
+              <AnimatePresence mode="popLayout">
+                {inboxItems.map(item => (
+                  <InboxItemRow
+                    key={item.id}
+                    item={item}
+                    onAccept={() => handleAcceptInboxItem(item)}
+                    onDecline={() => handleDeclineInboxItem(item)}
+                  />
+                ))}
+              </AnimatePresence>
+            ) : (
+              <div className="py-20 text-center space-y-2 opacity-40">
+                <p className="text-4xl">💌</p>
+                <p className="font-bold">No pending inbox tasks.</p>
+              </div>
+            )}
+          </div>
+        ) : viewMode === 'list' ? (
           <div className="space-y-3">
             <AnimatePresence mode="popLayout">
               {filteredTasks.length > 0 ? (
                 filteredTasks.map(task => (
-                  <TaskItem 
-                    key={task.id} 
-                    task={task} 
+                  <TaskItem
+                    key={task.id}
+                    task={task}
                     bucket={buckets.find(b => b.id === task.bucketId)}
                     onToggle={() => handleToggleStatus(task)}
                     onEdit={() => setEditingTask(task)}
@@ -162,13 +244,15 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialStatusFilter, onCle
         )}
       </div>
 
-      {/* FAB */}
-      <Button
-        className="fixed bottom-24 right-6 w-14 h-14 rounded-2xl shadow-xl z-40"
-        onClick={() => setIsNewTaskModalOpen(true)}
-      >
-        <Plus size={32} />
-      </Button>
+      {/* FAB — hidden in inbox view */}
+      {!isInboxView && (
+        <Button
+          className="fixed bottom-24 right-6 w-14 h-14 rounded-2xl shadow-xl z-40"
+          onClick={() => setIsNewTaskModalOpen(true)}
+        >
+          <Plus size={32} />
+        </Button>
+      )}
 
       {/* Modals */}
       <Modal 
@@ -247,6 +331,62 @@ const TaskItem: React.FC<{
         </div>
         
         <ChevronRight size={16} className="text-nook-sand" />
+      </Card>
+    </motion.div>
+  );
+};
+
+const InboxItemRow: React.FC<{
+  item: InboxItem;
+  onAccept: () => void;
+  onDecline: () => void;
+}> = ({ item, onAccept, onDecline }) => {
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.9 }}
+    >
+      <Card className="p-4 space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <h3 className="font-bold text-nook-ink">{item.title}</h3>
+            {item.details && (
+              <p className="text-sm text-nook-ink/60 mt-0.5 line-clamp-2">{item.details}</p>
+            )}
+          </div>
+          <div className="flex gap-1 shrink-0">
+            {item.isUrgent && <AlertCircle size={14} className="text-red-500" />}
+            {item.isImportant && <Star size={14} className="text-nook-orange" fill="currentColor" />}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 text-[11px] font-bold text-nook-ink/40 uppercase tracking-wide">
+          {item.dueDate && (
+            <span>Due {format(item.dueDate, 'MMM d')}</span>
+          )}
+          <span className="truncate">From: {item.contributorEmail}</span>
+        </div>
+
+        <div className="flex gap-2 pt-1">
+          <button
+            onClick={onDecline}
+            aria-label="Decline"
+            className="flex-1 py-2.5 rounded-xl text-sm font-bold border-2 border-nook-sand text-nook-ink/50 hover:border-red-300 hover:text-red-500 transition-all flex items-center justify-center gap-2"
+          >
+            <X size={16} />
+            Decline
+          </button>
+          <button
+            onClick={onAccept}
+            aria-label="Accept"
+            className="flex-[2] py-2.5 rounded-xl text-sm font-bold bg-nook-orange text-white flex items-center justify-center gap-2 hover:bg-nook-orange/90 transition-all"
+          >
+            <Check size={16} />
+            Accept
+          </button>
+        </div>
       </Card>
     </motion.div>
   );

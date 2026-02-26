@@ -8,8 +8,17 @@ export interface Nudge {
 
 const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
 
-export function generateNudges(tasks: Task[], lastExportDate: Date | null = null, isSignedIn = false): Nudge[] {
+export function generateNudges(tasks: Task[], lastExportDate: Date | null = null, isSignedIn = false, pendingInboxCount = 0): Nudge[] {
   const nudges: Nudge[] = [];
+
+  if (pendingInboxCount > 0) {
+    nudges.push({
+      id: 'inbox-pending',
+      message: `💌 ${pendingInboxCount} task${pendingInboxCount !== 1 ? 's' : ''} from your partner ${pendingInboxCount !== 1 ? 'are' : 'is'} waiting for your review.`,
+      type: 'gentle',
+    });
+  }
+
   const activeTasks = tasks.filter(t => t.status !== 'done' && t.status !== 'backlog');
   const backlogTasks = tasks.filter(t => t.status === 'backlog');
   
@@ -27,6 +36,7 @@ export function generateNudges(tasks: Task[], lastExportDate: Date | null = null
         type: 'praise'
       });
     }
+    // Still return here — backup-overdue not needed when there are no tasks and inbox nudge already added above
     return nudges;
   }
 

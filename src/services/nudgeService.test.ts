@@ -124,6 +124,52 @@ describe('generateNudges: backup-overdue nudge', () => {
   });
 });
 
+describe('generateNudges: inbox-pending nudge', () => {
+  const activeTasks = [createTask({ status: 'todo' })];
+
+  it('emits inbox-pending nudge when pendingInboxCount > 0', () => {
+    const nudges = generateNudges(activeTasks, null, true, 3);
+    const nudge = nudges.find(n => n.id === 'inbox-pending');
+    expect(nudge).toBeDefined();
+    expect(nudge?.type).toBe('gentle');
+  });
+
+  it('inbox-pending nudge is the first nudge in the list', () => {
+    const nudges = generateNudges(activeTasks, null, true, 2);
+    expect(nudges[0].id).toBe('inbox-pending');
+  });
+
+  it('message is singular when count is 1', () => {
+    const nudges = generateNudges(activeTasks, null, true, 1);
+    const nudge = nudges.find(n => n.id === 'inbox-pending');
+    expect(nudge?.message).toContain('1 task');
+    expect(nudge?.message).not.toContain('tasks');
+    expect(nudge?.message).toContain('is waiting');
+  });
+
+  it('message is plural when count > 1', () => {
+    const nudges = generateNudges(activeTasks, null, true, 5);
+    const nudge = nudges.find(n => n.id === 'inbox-pending');
+    expect(nudge?.message).toContain('5 tasks');
+    expect(nudge?.message).toContain('are waiting');
+  });
+
+  it('does NOT emit inbox-pending nudge when pendingInboxCount is 0', () => {
+    const nudges = generateNudges(activeTasks, null, true, 0);
+    expect(nudges.find(n => n.id === 'inbox-pending')).toBeUndefined();
+  });
+
+  it('does NOT emit inbox-pending nudge when pendingInboxCount is omitted (default 0)', () => {
+    const nudges = generateNudges(activeTasks, null, true);
+    expect(nudges.find(n => n.id === 'inbox-pending')).toBeUndefined();
+  });
+
+  it('emits inbox-pending nudge even when active task list is empty', () => {
+    const nudges = generateNudges([], null, true, 2);
+    expect(nudges.find(n => n.id === 'inbox-pending')).toBeDefined();
+  });
+});
+
 describe('generateNudges: backup-overdue suppression when signed in', () => {
   const activeTasks = [createTask({ status: 'todo' })];
 

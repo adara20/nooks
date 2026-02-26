@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { TasksView } from './TasksView';
 import { createTask, createBucket } from '../tests/factories';
+import type { InboxItem } from '../services/contributorService';
 
 vi.mock('dexie-react-hooks', () => ({
   useLiveQuery: vi.fn(),
@@ -23,13 +24,46 @@ vi.mock('../services/repository', () => ({
 
 vi.mock('motion/react', () => ({
   motion: {
-    div: ({ children, ...props }: React.HTMLAttributes<HTMLDivElement>) => <div {...props}>{children}</div>,
+    div: ({ children, initial: _i, animate: _a, exit: _e, transition: _t, layout: _l, ...props }:
+      React.HTMLAttributes<HTMLDivElement> & { initial?: unknown; animate?: unknown; exit?: unknown; transition?: unknown; layout?: unknown }
+    ) => <div {...props}>{children}</div>,
   },
   AnimatePresence: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockFetchPendingInboxItems = vi.fn<any>(async (): Promise<InboxItem[]> => []);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockAcceptInboxItem = vi.fn<any>(async () => {});
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockDeclineInboxItem = vi.fn<any>(async () => {});
+
+vi.mock('../services/contributorService', () => ({
+  fetchPendingInboxItems: (ownerUID: string) => mockFetchPendingInboxItems(ownerUID),
+  acceptInboxItem: (ownerUID: string, inboxId: string, taskId: number) => mockAcceptInboxItem(ownerUID, inboxId, taskId),
+  declineInboxItem: (ownerUID: string, inboxId: string) => mockDeclineInboxItem(ownerUID, inboxId),
+}));
+
+vi.mock('../context/AuthContext', () => ({
+  useAuth: () => ({ user: { uid: 'owner-123' }, isSignedIn: true }),
+}));
+
 import { useLiveQuery } from 'dexie-react-hooks';
 import { repository } from '../services/repository';
+
+function createInboxItem(overrides: Partial<InboxItem> = {}): InboxItem {
+  return {
+    id: 'inbox-1',
+    title: 'Partner task',
+    isUrgent: false,
+    isImportant: false,
+    contributorUID: 'contrib-456',
+    contributorEmail: 'partner@example.com',
+    status: 'pending',
+    createdAt: new Date('2024-01-01'),
+    ...overrides,
+  };
+}
 
 // useLiveQuery is called twice per render: once for tasks, once for buckets.
 // Use mockReturnValue with a counter to alternate return values.
@@ -46,6 +80,8 @@ const mockOnFilterChange = vi.fn();
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default: inbox returns empty array (avoids timeouts in non-inbox tests)
+  mockFetchPendingInboxItems.mockResolvedValue([]);
 });
 
 describe('TasksView', () => {
@@ -499,6 +535,158 @@ describe('TasksView', () => {
       await userEvent.click(screen.getByText('Add New Bucket'));
       await userEvent.click(screen.getByText('Add'));
       expect(repository.addBucket).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('inbox filter view', () => {
+    it('shows loading state while fetching inbox items', async () => {
+      // Make fetchPendingInboxItems never resolve during this test
+      let resolve: (items: InboxItem[]) => void;
+      mockFetchPendingInboxItems.mockReturnValueOnce(new Promise(r => { resolve = r; }));
+      setupLiveQuery();
+      render(<TasksView initialStatusFilter="inbox" />);
+      expect(await screen.findByText('Loading inbox...')).toBeInTheDocument();
+      // Resolve to clean up
+      resolve!([]);
+    });
+
+    it('shows empty state when no pending inbox items', async () => {
+      mockFetchPendingInboxItems.mockResolvedValueOnce([]);
+      setupLiveQuery();
+      render(<TasksView initialStatusFilter="inbox" />);
+      expect(await screen.findByText('No pending inbox tasks.')).toBeInTheDocument();
+    });
+
+    it('renders inbox item title', async () => {
+      mockFetchPendingInboxItems.mockResolvedValueOnce([
+        createInboxItem({ title: 'Buy birthday cake' }),
+      ]);
+      setupLiveQuery();
+      render(<TasksView initialStatusFilter="inbox" />);
+      expect(await screen.findByText('Buy birthday cake')).toBeInTheDocument();
+    });
+
+    it('renders contributor email in inbox item', async () => {
+      mockFetchPendingInboxItems.mockResolvedValueOnce([
+        createInboxItem({ contributorEmail: 'partner@example.com' }),
+      ]);
+      setupLiveQuery();
+      render(<TasksView initialStatusFilter="inbox" />);
+      expect(await screen.findByText(/partner@example\.com/i)).toBeInTheDocument();
+    });
+
+    it('renders Accept and Decline buttons for each inbox item', async () => {
+      mockFetchPendingInboxItems.mockResolvedValueOnce([
+        createInboxItem({ id: 'item-1', title: 'Task A' }),
+      ]);
+      setupLiveQuery();
+      render(<TasksView initialStatusFilter="inbox" />);
+      expect(await screen.findByRole('button', { name: /accept/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /decline/i })).toBeInTheDocument();
+    });
+
+    it('calls fetchPendingInboxItems with owner uid on mount', async () => {
+      mockFetchPendingInboxItems.mockResolvedValueOnce([]);
+      setupLiveQuery();
+      render(<TasksView initialStatusFilter="inbox" />);
+      await waitFor(() => {
+        expect(mockFetchPendingInboxItems).toHaveBeenCalledWith('owner-123');
+      });
+    });
+
+    it('hides FAB when in inbox view', async () => {
+      mockFetchPendingInboxItems.mockResolvedValueOnce([]);
+      setupLiveQuery();
+      render(<TasksView initialStatusFilter="inbox" />);
+      await screen.findByText('No pending inbox tasks.');
+      // FAB button (Plus icon) should not be present
+      const allButtons = screen.getAllByRole('button');
+      // FAB is typically the last button and has no text content — verify none have bottom-24 class
+      const fabLike = allButtons.filter(b => b.className.includes('bottom-24'));
+      expect(fabLike).toHaveLength(0);
+    });
+
+    it('clicking Accept calls repository.addTask then acceptInboxItem', async () => {
+      const item = createInboxItem({ id: 'inbox-abc', title: 'Urgent task', isUrgent: true, isImportant: true });
+      mockFetchPendingInboxItems.mockResolvedValueOnce([item]);
+      setupLiveQuery();
+      render(<TasksView initialStatusFilter="inbox" />);
+      const acceptBtn = await screen.findByRole('button', { name: /accept/i });
+      await userEvent.click(acceptBtn);
+      await waitFor(() => {
+        expect(repository.addTask).toHaveBeenCalledWith(
+          expect.objectContaining({
+            title: 'Urgent task',
+            status: 'todo',
+            isUrgent: true,
+            isImportant: true,
+            contributorUID: 'contrib-456',
+          })
+        );
+        expect(mockAcceptInboxItem).toHaveBeenCalledWith('owner-123', 'inbox-abc', 1);
+      });
+    });
+
+    it('accepted item is removed from the list after acceptance', async () => {
+      const item = createInboxItem({ id: 'inbox-gone', title: 'About to be accepted' });
+      mockFetchPendingInboxItems.mockResolvedValueOnce([item]);
+      setupLiveQuery();
+      render(<TasksView initialStatusFilter="inbox" />);
+      const acceptBtn = await screen.findByRole('button', { name: /accept/i });
+      await userEvent.click(acceptBtn);
+      await waitFor(() => {
+        expect(screen.queryByText('About to be accepted')).not.toBeInTheDocument();
+      });
+    });
+
+    it('clicking Decline calls declineInboxItem', async () => {
+      const item = createInboxItem({ id: 'inbox-decline', title: 'Declined task' });
+      mockFetchPendingInboxItems.mockResolvedValueOnce([item]);
+      setupLiveQuery();
+      render(<TasksView initialStatusFilter="inbox" />);
+      const declineBtn = await screen.findByRole('button', { name: /decline/i });
+      await userEvent.click(declineBtn);
+      await waitFor(() => {
+        expect(mockDeclineInboxItem).toHaveBeenCalledWith('owner-123', 'inbox-decline');
+      });
+    });
+
+    it('declined item is removed from the list after declining', async () => {
+      const item = createInboxItem({ id: 'inbox-bye', title: 'Going away' });
+      mockFetchPendingInboxItems.mockResolvedValueOnce([item]);
+      setupLiveQuery();
+      render(<TasksView initialStatusFilter="inbox" />);
+      const declineBtn = await screen.findByRole('button', { name: /decline/i });
+      await userEvent.click(declineBtn);
+      await waitFor(() => {
+        expect(screen.queryByText('Going away')).not.toBeInTheDocument();
+      });
+    });
+
+    it('shows inbox filter chip in the top bar', async () => {
+      mockFetchPendingInboxItems.mockResolvedValueOnce([]);
+      setupLiveQuery();
+      render(<TasksView initialStatusFilter="inbox" />);
+      // The "inbox" text should appear in the filter chip
+      expect(screen.getByText('inbox')).toBeInTheDocument();
+    });
+
+    it('shows due date when inbox item has a dueDate', async () => {
+      // Use local date construction to avoid UTC timezone shifting (e.g., Mar 15 UTC → Mar 14 local)
+      const dueDate = new Date(2025, 2, 15); // month is 0-indexed: 2 = March
+      const item = createInboxItem({ dueDate });
+      mockFetchPendingInboxItems.mockResolvedValueOnce([item]);
+      setupLiveQuery();
+      render(<TasksView initialStatusFilter="inbox" />);
+      expect(await screen.findByText(/Mar 15/i)).toBeInTheDocument();
+    });
+
+    it('shows details when inbox item has details', async () => {
+      const item = createInboxItem({ details: 'Extra context here' });
+      mockFetchPendingInboxItems.mockResolvedValueOnce([item]);
+      setupLiveQuery();
+      render(<TasksView initialStatusFilter="inbox" />);
+      expect(await screen.findByText('Extra context here')).toBeInTheDocument();
     });
   });
 });

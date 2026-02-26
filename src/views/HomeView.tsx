@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { repository } from '../services/repository';
 import { generateNudges } from '../services/nudgeService';
 import { getLastExportDate } from '../services/backupService';
 import { useAuth } from '../context/AuthContext';
+import { getPendingInboxCount, getAppMode } from '../services/contributorService';
 import { Card } from '../components/Card';
 import { motion } from 'motion/react';
 import { Sparkles, Flame, Info, CheckCircle2, Settings } from 'lucide-react';
@@ -17,11 +18,19 @@ interface HomeViewProps {
 export const HomeView: React.FC<HomeViewProps> = ({ onNavigateToTasks, onNavigateToSettings }) => {
   const tasks = useLiveQuery(() => repository.getAllTasks());
   const buckets = useLiveQuery(() => repository.getAllBuckets());
-  const { isSignedIn } = useAuth();
+  const { isSignedIn, user } = useAuth();
+  const [pendingInboxCount, setPendingInboxCount] = useState(0);
+
+  useEffect(() => {
+    if (!isSignedIn || !user || getAppMode() !== 'owner') return;
+    getPendingInboxCount(user.uid)
+      .then(setPendingInboxCount)
+      .catch(() => {}); // fire-and-forget, never crash the home view
+  }, [isSignedIn, user]);
 
   if (!tasks || !buckets) return null;
 
-  const nudges = generateNudges(tasks, getLastExportDate(), isSignedIn);
+  const nudges = generateNudges(tasks, getLastExportDate(), isSignedIn, pendingInboxCount);
   const activeTasks = tasks.filter(t => t.status !== 'done' && t.status !== 'backlog');
   const doneTasks = tasks.filter(t => t.status === 'done');
   const inProgressTasks = tasks.filter(t => t.status === 'in-progress');
@@ -74,6 +83,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigateToTasks, onNavigat
               <Card
                 onClick={() => {
                   if (nudge.id === 'backup-overdue') onNavigateToSettings();
+                  else if (nudge.id === 'inbox-pending') onNavigateToTasks('inbox');
                   else if (nudge.id === 'urgent-important') onNavigateToTasks('urgent-important');
                   else if (nudge.id === 'important-not-urgent') onNavigateToTasks('important-not-urgent');
                   else if (nudge.id === 'backlog-nudge' || nudge.id === 'backlog-heavy') onNavigateToTasks('backlog');
@@ -90,28 +100,28 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigateToTasks, onNavigat
       </section>
 
       <section className="grid grid-cols-2 gap-4">
-        <Card 
+        <Card
           onClick={() => onNavigateToTasks('active')}
           className="bg-nook-orange text-white border-none flex flex-col justify-between h-32"
         >
           <span className="text-xs font-bold uppercase tracking-widest opacity-80">Active</span>
           <span className="text-5xl font-display font-bold">{activeTasks.length}</span>
         </Card>
-        <Card 
+        <Card
           onClick={() => onNavigateToTasks('done')}
           className="bg-nook-leaf text-white border-none flex flex-col justify-between h-32"
         >
           <span className="text-xs font-bold uppercase tracking-widest opacity-80">Done</span>
           <span className="text-5xl font-display font-bold">{doneTasks.length}</span>
         </Card>
-        <Card 
+        <Card
           onClick={() => onNavigateToTasks('in-progress')}
           className="bg-nook-sand text-nook-ink border-none flex flex-col justify-between h-32"
         >
           <span className="text-xs font-bold uppercase tracking-widest opacity-60">In Progress</span>
           <span className="text-5xl font-display font-bold">{inProgressTasks.length}</span>
         </Card>
-        <Card 
+        <Card
           onClick={() => onNavigateToTasks('backlog')}
           className="bg-nook-clay text-white border-none flex flex-col justify-between h-32"
         >

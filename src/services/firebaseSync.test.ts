@@ -158,10 +158,17 @@ describe('firebaseService — sync helpers', () => {
       });
 
       it('serialises null for undefined optional date fields', async () => {
-        await syncUpsertTask(baseTask); // no dueDate, no completedAt
+        await syncUpsertTask(baseTask); // no dueDate, no completedAt, no contributorUID
         const data = mockSetDoc.mock.lastCall?.[0] as Record<string, unknown>;
         expect(data.dueDate).toBeNull();
         expect(data.completedAt).toBeNull();
+        expect(data.contributorUID).toBeNull();
+      });
+
+      it('serialises contributorUID when set', async () => {
+        await syncUpsertTask({ ...baseTask, contributorUID: 'contrib-uid-789' });
+        const data = mockSetDoc.mock.lastCall?.[0] as Record<string, unknown>;
+        expect(data.contributorUID).toBe('contrib-uid-789');
       });
 
       it('is a no-op when task has no id', async () => {
@@ -266,6 +273,25 @@ describe('firebaseService — sync helpers', () => {
         expect(result.tasks).toHaveLength(1);
         expect(result.tasks[0].title).toBe('Do laundry');
         expect(result.tasks[0].createdAt).toBeInstanceOf(Date);
+        expect(result.tasks[0].contributorUID).toBeUndefined();
+      });
+
+      it('deserialises contributorUID when present on a task document', async () => {
+        mockGetDocs
+          .mockResolvedValueOnce(makeSnap([])) // buckets
+          .mockResolvedValueOnce(makeSnap([
+            {
+              id: 9,
+              title: 'Inbox task',
+              status: 'todo',
+              isUrgent: false,
+              isImportant: false,
+              contributorUID: 'contrib-uid-abc',
+              createdAt: FakeTimestamp.fromDate(new Date('2024-03-01')),
+            },
+          ]));
+        const result = await fetchCloudData('uid-xyz');
+        expect(result.tasks[0].contributorUID).toBe('contrib-uid-abc');
       });
 
       it('returns empty arrays when collections are empty', async () => {

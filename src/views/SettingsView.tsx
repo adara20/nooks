@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
-import { formatDistanceToNow } from 'date-fns';
-import { Download, Upload, ArrowLeft, AlertCircle, Cloud, CloudOff, LogIn, UserPlus, LogOut, CheckCircle2, Loader2 } from 'lucide-react';
+import { formatDistanceToNow, addDays, format } from 'date-fns';
+import { Download, Upload, ArrowLeft, AlertCircle, Cloud, CloudOff, LogIn, UserPlus, LogOut, CheckCircle2, Loader2, Copy, Users } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { Modal } from '../components/Modal';
@@ -16,12 +16,265 @@ import {
   setLastExportDate,
   type NooksBackup,
 } from '../services/backupService';
+import {
+  type AppMode,
+  getAppMode,
+  setAppMode,
+  getStoredOwnerEmail,
+  storeOwnerInfo,
+  clearOwnerInfo,
+  generateInviteCode,
+  redeemInviteCode,
+  getContributorPermission,
+  removeContributorPermission,
+} from '../services/contributorService';
 import { useAuth } from '../context/AuthContext';
 import { cn } from '../utils/cn';
 
 interface SettingsViewProps {
   onBack: () => void;
+  onModeChange?: (mode: AppMode) => void;
 }
+
+// ─── App Mode Card ────────────────────────────────────────────────────────────
+
+const AppModeCard: React.FC<{ onModeChange: (mode: AppMode) => void }> = ({ onModeChange }) => {
+  const { user, isSignedIn } = useAuth();
+  const [mode, setMode] = useState<AppMode>(getAppMode());
+  const [inviteCode, setInviteCode] = useState<string | null>(null);
+  const [inviteExpiry, setInviteExpiry] = useState<Date | null>(null);
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteCopied, setInviteCopied] = useState(false);
+  const [redeemCode, setRedeemCode] = useState('');
+  const [redeemError, setRedeemError] = useState<string | null>(null);
+  const [redeemLoading, setRedeemLoading] = useState(false);
+  const [redeemSuccess, setRedeemSuccess] = useState(false);
+  const [linkedEmail, setLinkedEmail] = useState<string | null>(() => getStoredOwnerEmail());
+
+  // Load contributor permission on mount (if in contributor mode and signed in)
+  React.useEffect(() => {
+    if (mode === 'contributor' && isSignedIn && user) {
+      getContributorPermission(user.uid)
+        .then(perm => {
+          if (perm) setLinkedEmail(perm.ownerEmail);
+        })
+        .catch(() => {});
+    }
+  }, [mode, isSignedIn, user]);
+
+  const handleModeToggle = (newMode: AppMode) => {
+    if (newMode === mode) return;
+    setAppMode(newMode);
+    setMode(newMode);
+    onModeChange(newMode);
+    // Reset invite state when toggling
+    setInviteCode(null);
+    setInviteExpiry(null);
+    setRedeemError(null);
+    setRedeemSuccess(false);
+    if (newMode === 'owner') {
+      clearOwnerInfo();
+      setLinkedEmail(null);
+    }
+  };
+
+  const handleGenerateInvite = async () => {
+    if (!user) return;
+    setInviteLoading(true);
+    setInviteError(null);
+    try {
+      const code = await generateInviteCode(user.uid, user.email ?? '');
+      setInviteCode(code);
+      setInviteExpiry(addDays(new Date(), 7));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setInviteError(msg.includes('permission') || msg.includes('Missing or insufficient')
+        ? 'Permission denied. Make sure the Firestore security rules allow writes to the invites collection.'
+        : 'Failed to generate invite code. Please try again.');
+    } finally {
+      setInviteLoading(false);
+    }
+  };
+
+  const handleCopyCode = async () => {
+    if (!inviteCode) return;
+    await navigator.clipboard.writeText(inviteCode);
+    setInviteCopied(true);
+    setTimeout(() => setInviteCopied(false), 2000);
+  };
+
+  const handleRedeem = async () => {
+    if (!user || !redeemCode.trim()) return;
+    setRedeemLoading(true);
+    setRedeemError(null);
+    try {
+      const result = await redeemInviteCode(redeemCode.trim(), user.uid, user.email ?? '');
+      storeOwnerInfo(result.ownerUID, result.ownerEmail);
+      setLinkedEmail(result.ownerEmail);
+      setRedeemSuccess(true);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('expired')) setRedeemError('This invite code has expired.');
+      else if (msg.includes('already redeemed')) setRedeemError('This code has already been used.');
+      else if (msg.includes('not found')) setRedeemError('Invite code not found. Check the code and try again.');
+      else setRedeemError('Something went wrong. Please try again.');
+    } finally {
+      setRedeemLoading(false);
+    }
+  };
+
+  const handleRemoveContributor = async () => {
+    if (!user) return;
+    try {
+      await removeContributorPermission(user.uid);
+    } catch {
+      // silently fail
+    }
+    setLinkedEmail(null);
+  };
+
+  return (
+    <Card className="space-y-4">
+      {/* Section header */}
+      <div className="flex items-center gap-2">
+        <Users size={18} className="text-nook-ink/60" />
+        <span className="text-sm font-bold text-nook-ink">App Mode</span>
+      </div>
+
+      {/* Mode toggle */}
+      <div className="flex rounded-xl overflow-hidden border border-nook-ink/10" data-testid="app-mode-toggle">
+        <button
+          className={cn(
+            'flex-1 py-2 text-xs font-bold transition-colors',
+            mode === 'owner' ? 'bg-nook-ink text-white' : 'bg-transparent text-nook-ink/50 hover:text-nook-ink'
+          )}
+          onClick={() => handleModeToggle('owner')}
+          data-testid="mode-owner-btn"
+        >
+          Owner
+        </button>
+        <button
+          className={cn(
+            'flex-1 py-2 text-xs font-bold transition-colors',
+            mode === 'contributor' ? 'bg-nook-ink text-white' : 'bg-transparent text-nook-ink/50 hover:text-nook-ink'
+          )}
+          onClick={() => handleModeToggle('contributor')}
+          data-testid="mode-contributor-btn"
+        >
+          Contributor
+        </button>
+      </div>
+
+      {/* Owner mode: invite + linked contributor */}
+      {mode === 'owner' && isSignedIn && (
+        <div className="space-y-3">
+          {!inviteCode ? (
+            <Button
+              variant="secondary"
+              className="w-full py-3 text-sm"
+              onClick={handleGenerateInvite}
+              disabled={inviteLoading}
+              data-testid="generate-invite-btn"
+            >
+              {inviteLoading ? <Loader2 size={16} className="animate-spin mr-2" /> : null}
+              Generate Invite Code
+            </Button>
+          ) : (
+            <div className="p-3 bg-nook-sand/30 rounded-xl space-y-2" data-testid="invite-code-card">
+              <p className="text-[11px] font-bold uppercase tracking-widest text-nook-ink/40">Invite Code</p>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xl font-bold font-mono tracking-widest text-nook-ink" data-testid="invite-code-text">
+                  {inviteCode}
+                </span>
+                <button
+                  onClick={handleCopyCode}
+                  aria-label="Copy invite code"
+                  className="text-nook-ink/40 hover:text-nook-orange transition-colors"
+                  data-testid="copy-invite-btn"
+                >
+                  {inviteCopied ? <CheckCircle2 size={18} className="text-green-500" /> : <Copy size={18} />}
+                </button>
+              </div>
+              {inviteExpiry && (
+                <p className="text-[11px] text-nook-ink/40">
+                  Expires {format(inviteExpiry, 'MMM d, yyyy')}
+                </p>
+              )}
+            </div>
+          )}
+
+          {inviteError && (
+            <p className="text-xs text-red-600" role="alert" data-testid="invite-error">{inviteError}</p>
+          )}
+
+          {linkedEmail && (
+            <div className="flex items-center justify-between p-3 bg-green-50 rounded-xl" data-testid="linked-contributor-card">
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-widest text-nook-ink/40">Linked Contributor</p>
+                <p className="text-sm font-bold text-nook-ink">{linkedEmail}</p>
+              </div>
+              <button
+                onClick={handleRemoveContributor}
+                className="text-xs text-red-400 hover:text-red-600 font-bold transition-colors"
+                data-testid="remove-contributor-btn"
+              >
+                Remove
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Owner mode: prompt to sign in */}
+      {mode === 'owner' && !isSignedIn && (
+        <p className="text-xs text-nook-ink/50">
+          Sign in via Cloud Backup to generate an invite code for your contributor.
+        </p>
+      )}
+
+      {/* Contributor mode */}
+      {mode === 'contributor' && (
+        <div className="space-y-3">
+          {redeemSuccess ? (
+            <div className="p-3 bg-green-50 rounded-xl text-green-700 text-sm font-bold" data-testid="redeem-success">
+              ✅ Linked! Switch back to see your home screen.
+            </div>
+          ) : linkedEmail ? (
+            <div className="p-3 bg-green-50 rounded-xl" data-testid="linked-owner-card">
+              <p className="text-[11px] font-bold uppercase tracking-widest text-nook-ink/40">Linked to</p>
+              <p className="text-sm font-bold text-nook-ink">{linkedEmail}</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs text-nook-ink/50">Enter the invite code from the owner to link your accounts.</p>
+              <input
+                type="text"
+                placeholder="Invite code"
+                value={redeemCode}
+                onChange={e => setRedeemCode(e.target.value.toUpperCase())}
+                className="w-full px-4 py-2.5 rounded-xl border border-nook-ink/10 bg-white text-sm font-mono font-bold text-nook-ink placeholder-nook-ink/30 focus:outline-none focus:ring-2 focus:ring-nook-ink/20 uppercase tracking-widest"
+                data-testid="redeem-code-input"
+              />
+              {redeemError && (
+                <p className="text-xs text-red-600" role="alert" data-testid="redeem-error">{redeemError}</p>
+              )}
+              <Button
+                className="w-full py-3 text-sm"
+                onClick={handleRedeem}
+                disabled={redeemLoading || !redeemCode.trim()}
+                data-testid="redeem-btn"
+              >
+                {redeemLoading ? <Loader2 size={16} className="animate-spin mr-2" /> : null}
+                Link Account
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+};
 
 // ─── Cloud Backup Card ────────────────────────────────────────────────────────
 
@@ -198,7 +451,7 @@ const CloudBackupCard: React.FC = () => {
 
 // ─── SettingsView ──────────────────────────────────────────────────────────────
 
-export const SettingsView: React.FC<SettingsViewProps> = ({ onBack }) => {
+export const SettingsView: React.FC<SettingsViewProps> = ({ onBack, onModeChange }) => {
   const [lastExport, setLastExport] = useState<Date | null>(getLastExportDate);
   const [importError, setImportError] = useState<string | null>(null);
   const [importSuccess, setImportSuccess] = useState<string | null>(null);
@@ -206,6 +459,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onBack }) => {
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isReplaceConfirmOpen, setIsReplaceConfirmOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleModeChange = (newMode: AppMode) => {
+    onModeChange?.(newMode);
+  };
 
   const isStale = lastExport === null || Date.now() - lastExport.getTime() >= 3 * 24 * 60 * 60 * 1000;
 
@@ -333,6 +590,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onBack }) => {
           {importSuccess}
         </div>
       )}
+
+      {/* App Mode section */}
+      <section className="space-y-4">
+        <h2 className="text-xs font-bold uppercase tracking-widest text-nook-ink/40 px-1">Sharing</h2>
+        <AppModeCard onModeChange={handleModeChange} />
+      </section>
 
       {/* Cloud Backup section */}
       <section className="space-y-4">

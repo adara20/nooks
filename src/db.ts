@@ -20,6 +20,7 @@ export interface Task {
   dueDate?: Date;
   createdAt: Date;
   completedAt?: Date;
+  contributorUID?: string;  // set when task originated from a contributor inbox submission
 }
 
 export class NooksDatabase extends Dexie {
