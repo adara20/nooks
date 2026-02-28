@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, AlertCircle, Star, Trash2, X, Settings, EyeOff } from 'lucide-react';
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
@@ -19,6 +19,8 @@ import {
   clearDismissedSubmissions,
 } from '../services/contributorService';
 import { useAuth } from '../context/AuthContext';
+import { usePullToRefresh } from '../hooks/usePullToRefresh';
+import { PullToRefreshIndicator } from '../components/PullToRefreshIndicator';
 
 // ─── Status display constants ─────────────────────────────────────────────────
 
@@ -259,35 +261,42 @@ export const ContributorHomeView: React.FC<ContributorHomeViewProps> = ({ onNavi
 
   const userUid = user?.uid;
 
-  useEffect(() => {
+  // Extracted so it can be called both on mount and on pull-to-refresh
+  const fetchSubmissions = useCallback(async () => {
     // Can't fetch without both UIDs — show empty state immediately.
     if (!ownerUID || !userUid) {
       setLoading(false);
       return;
     }
     setLoading(true);
-    getContributorSubmissions(ownerUID, userUid)
-      .then(async (items) => {
-        setSubmissions(items);
-        // For each accepted item that has been linked to a local task (taskId set),
-        // fetch the live task status from the owner's Firestore document so we can
-        // show To Do / In Progress / Done ✓ instead of the static "Accepted" label.
-        // Requires the Firestore rule:
-        //   match /users/{userId}/tasks/{taskId} {
-        //     allow read: if request.auth != null
-        //                 && resource.data.contributorUID == request.auth.uid;
-        //   }
-        const accepted = items.filter(s => s.status === 'accepted' && s.taskId != null);
-        if (accepted.length > 0) {
-          const pairs = await Promise.all(
-            accepted.map(async s => [s.id, await getAcceptedTaskStatus(ownerUID, s.taskId!)] as const)
-          );
-          setTaskStatuses(new Map(pairs.filter(([, v]) => v !== null) as [string, string][]));
-        }
-      })
-      .catch(() => setSubmissions([]))
-      .finally(() => setLoading(false));
+    try {
+      const items = await getContributorSubmissions(ownerUID, userUid);
+      setSubmissions(items);
+      // For each accepted item that has been linked to a local task (taskId set),
+      // fetch the live task status from the owner's Firestore document so we can
+      // show To Do / In Progress / Done ✓ instead of the static "Accepted" label.
+      // Requires the Firestore rule:
+      //   match /users/{userId}/tasks/{taskId} {
+      //     allow read: if request.auth != null
+      //                 && resource.data.contributorUID == request.auth.uid;
+      //   }
+      const accepted = items.filter(s => s.status === 'accepted' && s.taskId != null);
+      if (accepted.length > 0) {
+        const pairs = await Promise.all(
+          accepted.map(async s => [s.id, await getAcceptedTaskStatus(ownerUID, s.taskId!)] as const)
+        );
+        setTaskStatuses(new Map(pairs.filter(([, v]) => v !== null) as [string, string][]));
+      }
+    } catch {
+      setSubmissions([]);
+    } finally {
+      setLoading(false);
+    }
   }, [ownerUID, userUid]);
+
+  useEffect(() => { fetchSubmissions(); }, [fetchSubmissions]);
+
+  const { pullDistance, isRefreshing } = usePullToRefresh({ onRefresh: fetchSubmissions });
 
   // Filter out submissions the contributor has soft-hidden (localStorage).
   // hiddenCount drives the "X hidden · Reveal" footer and the "All caught up" empty state.
@@ -354,6 +363,7 @@ export const ContributorHomeView: React.FC<ContributorHomeViewProps> = ({ onNavi
 
   return (
     <div className="pb-32">
+      <PullToRefreshIndicator pullDistance={pullDistance} isRefreshing={isRefreshing} />
       {/* Header */}
       <div className="px-6 pt-12 pb-6 flex items-start justify-between">
         <div className="space-y-1">

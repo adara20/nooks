@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { repository } from '../services/repository';
 import { type Task, type Bucket, type TaskStatus } from '../db';
@@ -16,6 +16,8 @@ import {
   declineInboxItem,
 } from '../services/contributorService';
 import { useAuth } from '../context/AuthContext';
+import { usePullToRefresh } from '../hooks/usePullToRefresh';
+import { PullToRefreshIndicator } from '../components/PullToRefreshIndicator';
 
 interface TasksViewProps {
   initialStatusFilter?: string | null;
@@ -42,14 +44,27 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialStatusFilter, onCle
   // Fetch pending inbox items from Firestore when the inbox view is active.
   // Items live in users/{ownerUID}/inbox and are not stored in local IndexedDB.
   const userUid = user?.uid;
-  useEffect(() => {
+
+  // Extracted so it can be called both on mount and on pull-to-refresh
+  const fetchInbox = useCallback(async () => {
     if (!isInboxView || !userUid) return;
     setInboxLoading(true);
-    fetchPendingInboxItems(userUid)
-      .then(setInboxItems)
-      .catch(() => setInboxItems([]))
-      .finally(() => setInboxLoading(false));
+    try {
+      setInboxItems(await fetchPendingInboxItems(userUid));
+    } catch {
+      setInboxItems([]);
+    } finally {
+      setInboxLoading(false);
+    }
   }, [isInboxView, userUid]);
+
+  useEffect(() => { fetchInbox(); }, [fetchInbox]);
+
+  const { pullDistance, isRefreshing } = usePullToRefresh({
+    onRefresh: fetchInbox,
+    // Only active in the inbox view — the normal task list is live via useLiveQuery
+    disabled: !isInboxView,
+  });
 
   if (!tasks || !buckets) return null;
 
@@ -128,6 +143,10 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialStatusFilter, onCle
 
   return (
     <div className="pb-32">
+      {/* Pull-to-refresh indicator — only shown in inbox view */}
+      {isInboxView && (
+        <PullToRefreshIndicator pullDistance={pullDistance} isRefreshing={isRefreshing} />
+      )}
       {/* Top Bar */}
       <div className="sticky top-0 bg-warm-bg/80 backdrop-blur-md z-30 px-6 pt-8 pb-4 space-y-4 safe-top">
         <div className="flex items-center justify-between">

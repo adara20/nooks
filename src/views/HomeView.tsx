@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { repository } from '../services/repository';
 import { generateNudges } from '../services/nudgeService';
@@ -6,6 +6,8 @@ import { getLastExportDate } from '../services/backupService';
 import { useAuth } from '../context/AuthContext';
 import { getPendingInboxCount, getAppMode } from '../services/contributorService';
 import { Card } from '../components/Card';
+import { PullToRefreshIndicator } from '../components/PullToRefreshIndicator';
+import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { motion } from 'motion/react';
 import { Sparkles, Flame, Info, CheckCircle2, Settings } from 'lucide-react';
 import { cn } from '../utils/cn';
@@ -21,12 +23,23 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigateToTasks, onNavigat
   const { isSignedIn, user } = useAuth();
   const [pendingInboxCount, setPendingInboxCount] = useState(0);
 
-  useEffect(() => {
+  // Extracted so it can be called both on mount and on pull-to-refresh
+  const fetchInboxCount = useCallback(async () => {
     if (!isSignedIn || !user || getAppMode() !== 'owner') return;
-    getPendingInboxCount(user.uid)
-      .then(setPendingInboxCount)
-      .catch(() => {}); // fire-and-forget, never crash the home view
+    try {
+      setPendingInboxCount(await getPendingInboxCount(user.uid));
+    } catch {
+      // fire-and-forget — never crash the home view
+    }
   }, [isSignedIn, user]);
+
+  useEffect(() => { fetchInboxCount(); }, [fetchInboxCount]);
+
+  const { pullDistance, isRefreshing } = usePullToRefresh({
+    onRefresh: fetchInboxCount,
+    // Only enable when the owner is signed in — contributors have their own view
+    disabled: !isSignedIn || getAppMode() !== 'owner',
+  });
 
   if (!tasks || !buckets) return null;
 
@@ -56,6 +69,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigateToTasks, onNavigat
 
   return (
     <div className="p-6 pb-32 space-y-8 safe-top">
+      <PullToRefreshIndicator pullDistance={pullDistance} isRefreshing={isRefreshing} />
       <header className="flex items-start justify-between">
         <div className="space-y-1">
           <h1 className="text-4xl font-display font-bold text-nook-ink">Hey there.</h1>
