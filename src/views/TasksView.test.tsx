@@ -48,8 +48,13 @@ vi.mock('../context/AuthContext', () => ({
   useAuth: () => ({ user: { uid: 'owner-123' }, isSignedIn: true }),
 }));
 
+vi.mock('../hooks/usePullToRefresh', () => ({
+  usePullToRefresh: vi.fn(() => ({ pullDistance: 0, isRefreshing: false })),
+}));
+
 import { useLiveQuery } from 'dexie-react-hooks';
 import { repository } from '../services/repository';
+import { usePullToRefresh } from '../hooks/usePullToRefresh';
 
 function createInboxItem(overrides: Partial<InboxItem> = {}): InboxItem {
   return {
@@ -687,6 +692,22 @@ describe('TasksView', () => {
       setupLiveQuery();
       render(<TasksView initialStatusFilter="inbox" />);
       expect(await screen.findByText('Extra context here')).toBeInTheDocument();
+    });
+
+    it('re-fetches inbox items when pull-to-refresh onRefresh is triggered', async () => {
+      mockFetchPendingInboxItems.mockResolvedValue([]);
+      setupLiveQuery();
+      render(<TasksView initialStatusFilter="inbox" />);
+      await screen.findByText('No pending inbox tasks.');
+
+      // Grab the onRefresh callback captured by the mocked usePullToRefresh hook
+      const capturedOnRefresh = vi.mocked(usePullToRefresh).mock.calls[0][0].onRefresh;
+      mockFetchPendingInboxItems.mockClear();
+      await capturedOnRefresh();
+
+      await waitFor(() => {
+        expect(mockFetchPendingInboxItems).toHaveBeenCalledWith('owner-123');
+      });
     });
   });
 });

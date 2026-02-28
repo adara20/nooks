@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ContributorHomeView } from './ContributorHomeView';
 import type { InboxItem } from '../services/contributorService';
@@ -43,6 +43,10 @@ vi.mock('../context/AuthContext', () => ({
   }),
 }));
 
+vi.mock('../hooks/usePullToRefresh', () => ({
+  usePullToRefresh: vi.fn(() => ({ pullDistance: 0, isRefreshing: false })),
+}));
+
 vi.mock('motion/react', () => ({
   motion: {
     div: ({
@@ -59,6 +63,8 @@ vi.mock('motion/react', () => ({
   },
   AnimatePresence: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
+
+import { usePullToRefresh } from '../hooks/usePullToRefresh';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -473,6 +479,23 @@ describe('ContributorHomeView', () => {
       renderView();
       await screen.findByText('No tasks submitted yet.');
       expect(mockGetContributorSubmissions).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('pull-to-refresh', () => {
+    it('re-fetches submissions when onRefresh is triggered', async () => {
+      mockGetContributorSubmissions.mockResolvedValue([]);
+      renderView();
+      await screen.findByText('No tasks submitted yet.');
+
+      // Grab the onRefresh callback captured by the mocked usePullToRefresh hook
+      const capturedOnRefresh = vi.mocked(usePullToRefresh).mock.calls[0][0].onRefresh;
+      mockGetContributorSubmissions.mockClear();
+      await act(async () => { await capturedOnRefresh(); });
+
+      await waitFor(() => {
+        expect(mockGetContributorSubmissions).toHaveBeenCalledWith('owner-uid-123', 'contrib-uid-456');
+      });
     });
   });
 });

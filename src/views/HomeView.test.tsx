@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HomeView } from './HomeView';
 import { createTask } from '../tests/factories';
@@ -20,8 +20,13 @@ vi.mock('../services/backupService', () => ({
   getLastExportDate: vi.fn(() => null),
 }));
 
+const mockUseAuth = vi.fn(() => ({ isSignedIn: false as boolean, user: null as { uid: string } | null }));
 vi.mock('../context/AuthContext', () => ({
-  useAuth: () => ({ isSignedIn: false, user: null }),
+  useAuth: () => mockUseAuth(),
+}));
+
+vi.mock('../hooks/usePullToRefresh', () => ({
+  usePullToRefresh: vi.fn(() => ({ pullDistance: 0, isRefreshing: false })),
 }));
 
 vi.mock('../services/contributorService', () => ({
@@ -47,6 +52,8 @@ vi.mock('motion/react', () => ({
 
 import { useLiveQuery } from 'dexie-react-hooks';
 import type { generateNudges as GenerateNudgesType } from '../services/nudgeService';
+import { usePullToRefresh } from '../hooks/usePullToRefresh';
+import { getPendingInboxCount } from '../services/contributorService';
 
 const mockOnNavigateToTasks = vi.fn();
 const mockOnNavigateToSettings = vi.fn();
@@ -67,6 +74,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   // Default: no nudges
   mockGenerateNudges.mockReturnValue([]);
+  // Default: not signed in
+  mockUseAuth.mockReturnValue({ isSignedIn: false, user: null });
 });
 
 describe('HomeView', () => {
@@ -280,6 +289,25 @@ describe('HomeView', () => {
       expect(mockGenerateNudges).toHaveBeenCalledOnce();
       const [, , , inboxCountArg] = mockGenerateNudges.mock.calls[0] as [unknown, unknown, boolean, number];
       expect(inboxCountArg).toBe(0);
+    });
+  });
+
+  describe('pull-to-refresh', () => {
+    it('re-fetches pending inbox count when onRefresh is triggered as signed-in owner', async () => {
+      // Arrange: sign in as owner so fetchInboxCount actually calls the service
+      mockUseAuth.mockReturnValue({ isSignedIn: true, user: { uid: 'owner-uid' } });
+      vi.mocked(getPendingInboxCount).mockResolvedValue(3);
+      renderHomeView();
+
+      // Act: grab the onRefresh callback passed to the (mocked) hook and invoke it
+      const capturedOnRefresh = vi.mocked(usePullToRefresh).mock.calls[0][0].onRefresh;
+      vi.mocked(getPendingInboxCount).mockClear();
+      await act(async () => { await capturedOnRefresh(); });
+
+      // Assert: the inbox count was re-fetched
+      await waitFor(() => {
+        expect(vi.mocked(getPendingInboxCount)).toHaveBeenCalledWith('owner-uid');
+      });
     });
   });
 });
