@@ -1,20 +1,51 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Nooks
 
-# Run and deploy your AI Studio app
+A warm, personal task management PWA organised around user-created **Buckets**. Built local-first — everything works offline, with optional Firebase cloud sync.
 
-This contains everything you need to run your app locally.
+## Tech Stack
 
-View your app in AI Studio: https://ai.studio/apps/01aece9a-a3f6-4234-b58a-94fe8b150594
+- **React + TypeScript** — UI and type safety
+- **Vite** — build tool and dev server
+- **Dexie (IndexedDB)** — local-first data storage, primary source of truth
+- **Firebase** — Auth (email/password) and Firestore (cloud sync + contributor inbox)
+- **Tailwind CSS** — styling
+- **Vitest + React Testing Library** — test suite
 
 ## Run Locally
 
-**Prerequisites:**  Node.js
-
+**Prerequisites:** Node.js
 
 1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+   ```
+   npm install
+   ```
+
+2. Copy the example env file and fill in your Firebase project credentials:
+   ```
+   cp .env.example .env
+   ```
+
+   The following variables are required (all found in your Firebase project settings):
+   ```
+   VITE_FIREBASE_API_KEY=
+   VITE_FIREBASE_AUTH_DOMAIN=
+   VITE_FIREBASE_PROJECT_ID=
+   VITE_FIREBASE_STORAGE_BUCKET=
+   VITE_FIREBASE_MESSAGING_SENDER_ID=
+   VITE_FIREBASE_APP_ID=
+   VITE_FIREBASE_MEASUREMENT_ID=
+   ```
+
+3. Start the dev server:
+   ```
+   npm run dev
+   ```
+
+## Testing
+
+```bash
+npm test                 # run once
+npm run test:watch       # watch mode
+npm run test:coverage    # with coverage report
+npm run lint             # type-check
+```
