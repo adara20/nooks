@@ -9,7 +9,7 @@ const {
   mockOnAuthStateChanged,
   mockInitializeApp,
   mockGetAuth,
-  mockGetFirestore,
+  mockInitializeFirestore,
 } = vi.hoisted(() => ({
   mockCreateUser: vi.fn(),
   mockSignIn: vi.fn(),
@@ -17,7 +17,7 @@ const {
   mockOnAuthStateChanged: vi.fn(),
   mockInitializeApp: vi.fn(() => ({})),
   mockGetAuth: vi.fn(() => ({ currentUser: null })),
-  mockGetFirestore: vi.fn(() => ({})),
+  mockInitializeFirestore: vi.fn(() => ({})),
 }));
 
 // ─── Mock Firebase modules ────────────────────────────────────────────────────
@@ -37,7 +37,9 @@ vi.mock('firebase/auth', () => ({
 }));
 
 vi.mock('firebase/firestore', () => ({
-  getFirestore: () => mockGetFirestore(),
+  initializeFirestore: () => mockInitializeFirestore(),
+  persistentLocalCache: vi.fn(() => ({})),
+  persistentMultipleTabManager: vi.fn(() => ({})),
 }));
 
 // Import after mocks are set up
@@ -54,7 +56,7 @@ describe('firebaseService — auth helpers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetAuth.mockReturnValue({ currentUser: null });
-    mockGetFirestore.mockReturnValue({});
+    mockInitializeFirestore.mockReturnValue({});
     mockInitializeApp.mockReturnValue({});
     mockCreateUser.mockResolvedValue({ user: { email: 'test@test.com' } });
     mockSignIn.mockResolvedValue({ user: { email: 'test@test.com' } });
