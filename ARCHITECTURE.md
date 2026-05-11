@@ -15,13 +15,14 @@ Nooks is a "local-first" application. IndexedDB is the primary source of truth, 
 ## 2. Core Layers
 
 ### A. Data Layer (`db.ts`, `services/repository.ts`)
-- **`db.ts`**: Defines the Dexie schema, handles schema migrations, and exports the `db` singleton.
+- **`db.ts`**: Defines the Dexie schema (currently at **version 2**), handles schema migrations, and exports the `db` singleton.
 - **`services/repository.ts`**: The central API for the entire app. **NEVER** call the database directly from a component; always use the `repository` singleton.
   - All CRUD operations for `Bucket` and `Task` go through here.
   - Side effects (e.g., setting `completedAt` when a task is marked done) are handled here, not in components.
 
 ### B. Business Logic Layer (`services/`)
 We keep the "Brain" of the app separate from the "Face" (UI):
+- **`notificationsSeenService.ts`**: Deduplication store for real-time toast notifications. `hasSeen(eventId)` returns `true` if an event has already been shown; `markSeen(eventId)` records it. Backed by the `notificationsSeen` Dexie table (schema v2). Prevents duplicate toasts on cold-start when Firestore's cache replays existing documents.
 - **`nudgeService.ts`**: Pure function that takes the current task list, last export date, `isSignedIn`, and `pendingInboxCount` and returns nudge cards for the Home screen. The `backup-overdue` nudge is suppressed when `isSignedIn` is `true`. The `inbox-pending` nudge is emitted first when `pendingInboxCount > 0`. No DB calls, no side effects.
 - **`backupService.ts`**: Pure functions for JSON data export/import. Handles serialisation (`exportData`, `triggerDownload`), validation (`validateBackup`), merge-deduplication (`mergeData`), and last-export tracking via `localStorage` (`getLastExportDate`, `setLastExportDate`). No DB calls — import coordination (clear + seed) lives in `SettingsView`.
 - **`firebaseService.ts`**: Firebase initialisation, auth helpers (`signUpWithEmail`, `signInWithEmail`, `signOutUser`, `onAuthChange`), fire-and-forget sync helpers (`syncUpsertTask/Bucket`, `syncDeleteTask/Bucket`), and initial-sync helpers (`fetchCloudData`, `pushAllToCloud`, `runInitialSync`). All sync functions are no-ops when the user is signed out; errors are swallowed so they never crash local writes.
@@ -29,6 +30,7 @@ We keep the "Brain" of the app separate from the "Face" (UI):
 
 ### C. Auth / Sync Layer (`context/AuthContext.tsx`)
 - **`AuthContext.tsx`**: Wraps `onAuthStateChanged`. Exposes `user`, `isSignedIn`, `authLoading`, `syncStatus` (`idle | syncing | synced | error`), and `signIn/signUp/signOut` helpers.
+- **`NotificationProvider.tsx`**: Mounts real-time Firestore `onSnapshot` listeners and renders a global `<Toaster />` (Sonner, `richColors`, `top-center`). In **owner mode** it listens to `users/{uid}/inbox` for new submissions and shows `📥 New submission from …` toasts. In **contributor mode** it listens to the owner's inbox (filtered by `contributorUID`) for `accepted`/`declined` status changes and to the owner's tasks (filtered by `contributorUID`) for any status change. All listeners skip the first snapshot when `fromCache === true` to prevent cold-start spam, and use `notificationsSeenService` to deduplicate across sessions. Wrapped around `<App />` inside `AuthProvider` in `main.tsx`.
 - On mount the app shows a loading screen until both `authLoading` and `isInitialized` are `false`.
 - On first sign-in per session (deduped via `useRef<Set<string>>`), `runInitialSync` is called; `syncStatus` transitions `idle → syncing → synced | error`.
 - `signOut` resets `syncStatus` to `idle`.
@@ -70,6 +72,16 @@ interface Task {
                              // read the live task status via getAcceptedTaskStatus
 }
 ```
+
+### NotificationSeen
+A deduplication record stored in IndexedDB only. Prevents the same toast from appearing more than once across sessions.
+```ts
+interface NotificationSeen {
+  id?: number;    // auto-incremented
+  eventId: string; // unique — format: inbox:created:{id} | inbox:status:{id}:{status} | task:status:{id}:{status}
+}
+```
+Added in **Dexie schema version 2**. This table is never synced to Firestore.
 
 ### InboxItem
 A contributor's task submission, stored in Firestore only (never in IndexedDB). Owned by the owner's UID.
