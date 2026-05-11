@@ -9,7 +9,7 @@ const {
   mockDoc,
   mockGetDocs,
   mockCollection,
-  mockGetFirestore,
+  mockInitializeFirestore,
   mockGetAuth,
   mockInitializeApp,
   FakeTimestamp,
@@ -30,7 +30,7 @@ const {
     mockDoc: vi.fn(),
     mockGetDocs: vi.fn(),
     mockCollection: vi.fn(),
-    mockGetFirestore: vi.fn(() => ({})),
+    mockInitializeFirestore: vi.fn(() => ({})),
     mockGetAuth: vi.fn(() => ({ currentUser: null })),
     mockInitializeApp: vi.fn(() => ({})),
     FakeTimestamp,
@@ -50,7 +50,9 @@ vi.mock('firebase/auth', () => ({
 }));
 
 vi.mock('firebase/firestore', () => ({
-  getFirestore: () => mockGetFirestore(),
+  initializeFirestore: () => mockInitializeFirestore(),
+  persistentLocalCache: vi.fn(() => ({})),
+  persistentMultipleTabManager: vi.fn(() => ({})),
   doc: (db: unknown, path: string) => { mockDoc(path); return { path }; },
   collection: (db: unknown, path: string) => { mockCollection(path); return { path }; },
   setDoc: (ref: unknown, data: unknown) => mockSetDoc(data),
@@ -103,7 +105,7 @@ describe('firebaseService — sync helpers', () => {
     mockDeleteDoc.mockResolvedValue(undefined);
     mockGetDocs.mockResolvedValue(makeSnap([]));
     mockGetAuth.mockReturnValue({ currentUser: null });
-    mockGetFirestore.mockReturnValue({});
+    mockInitializeFirestore.mockReturnValue({});
   });
 
   describe('when user is not signed in (currentUser is null)', () => {
