@@ -31,10 +31,13 @@ function startOwnerInboxListener(uid: string): Unsubscribe {
   let isFirstSnapshot = true;
 
   return onSnapshot(ref, { includeMetadataChanges: false }, async (snapshot) => {
-    // Skip the first snapshot if it's served from cache to avoid cold-start spam
+    // Always skip the first snapshot — it represents the current collection
+    // state, not a new event. New events only arrive in subsequent snapshots.
+    // (fromCache alone is insufficient: a live server snapshot on first load
+    // also contains all pre-existing documents and must be silently skipped.)
     if (isFirstSnapshot) {
       isFirstSnapshot = false;
-      if (snapshot.metadata.fromCache) return;
+      return;
     }
 
     for (const change of snapshot.docChanges()) {
@@ -64,7 +67,7 @@ function startContributorInboxStatusListener(ownerUID: string, contributorUID: s
   return onSnapshot(ref, { includeMetadataChanges: false }, async (snapshot) => {
     if (isFirstSnapshot) {
       isFirstSnapshot = false;
-      if (snapshot.metadata.fromCache) return;
+      return;
     }
 
     for (const change of snapshot.docChanges()) {
@@ -100,7 +103,7 @@ function startContributorTaskStatusListener(ownerUID: string, contributorUID: st
   return onSnapshot(ref, { includeMetadataChanges: false }, async (snapshot) => {
     if (isFirstSnapshot) {
       isFirstSnapshot = false;
-      if (snapshot.metadata.fromCache) return;
+      return;
     }
 
     for (const change of snapshot.docChanges()) {
