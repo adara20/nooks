@@ -88,6 +88,10 @@ function renderProvider() {
 describe('NotificationProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Explicitly clear toast sub-mocks — they're assigned via property so
+    // vi.clearAllMocks() may not track them in all Vitest versions.
+    mockToast.success.mockClear();
+    mockToast.error.mockClear();
     mockOnSnapshot.mockReturnValue(() => {}); // default: no-op unsubscribe
     mockHasSeen.mockResolvedValue(false);
     mockMarkSeen.mockResolvedValue(undefined);
@@ -113,7 +117,7 @@ describe('NotificationProvider', () => {
       expect(mockOnSnapshot).toHaveBeenCalledTimes(1);
     });
 
-    it('shows a toast for a new inbox submission', async () => {
+    it('shows a toast for a new inbox submission (second snapshot onwards)', async () => {
       let capturedCallback: ((snap: unknown) => void) | null = null;
       mockOnSnapshot.mockImplementation((_ref: unknown, _opts: unknown, cb: (snap: unknown) => void) => {
         capturedCallback = cb;
@@ -122,6 +126,12 @@ describe('NotificationProvider', () => {
 
       renderProvider();
 
+      // First snapshot is always skipped (initial collection state)
+      await act(async () => {
+        capturedCallback!(makeSnapshot([]));
+      });
+
+      // Second snapshot — this is a genuine new event
       await act(async () => {
         capturedCallback!(makeSnapshot([
           { type: 'added', id: 'inbox1', data: { contributorEmail: 'bob@example.com', title: 'Fix login bug' } },
@@ -133,7 +143,7 @@ describe('NotificationProvider', () => {
       });
     });
 
-    it('skips the first snapshot when fromCache is true', async () => {
+    it('always skips the first snapshot (fromCache: true — cold start via cache)', async () => {
       let capturedCallback: ((snap: unknown) => void) | null = null;
       mockOnSnapshot.mockImplementation((_ref: unknown, _opts: unknown, cb: (snap: unknown) => void) => {
         capturedCallback = cb;
@@ -146,6 +156,26 @@ describe('NotificationProvider', () => {
         capturedCallback!(makeSnapshot([
           { type: 'added', id: 'inbox1', data: { contributorEmail: 'bob@example.com', title: 'Fix login bug' } },
         ], true /* fromCache */));
+      });
+
+      expect(mockToast).not.toHaveBeenCalled();
+    });
+
+    it('always skips the first snapshot (fromCache: false — live server snapshot on open)', async () => {
+      let capturedCallback: ((snap: unknown) => void) | null = null;
+      mockOnSnapshot.mockImplementation((_ref: unknown, _opts: unknown, cb: (snap: unknown) => void) => {
+        capturedCallback = cb;
+        return () => {};
+      });
+
+      renderProvider();
+
+      // This is the bug that was reported: existing docs arrive via a live server
+      // snapshot (fromCache: false) on first load, but must still be suppressed.
+      await act(async () => {
+        capturedCallback!(makeSnapshot([
+          { type: 'added', id: 'inbox1', data: { contributorEmail: 'bob@example.com', title: 'Old submission' } },
+        ], false /* fromCache — live server snapshot */));
       });
 
       expect(mockToast).not.toHaveBeenCalled();
@@ -197,6 +227,11 @@ describe('NotificationProvider', () => {
 
       renderProvider();
 
+      // Skip first snapshot
+      await act(async () => {
+        capturedCallback!(makeSnapshot([]));
+      });
+
       await act(async () => {
         capturedCallback!(makeSnapshot([
           { type: 'added', id: 'inbox42', data: { contributorEmail: 'bob@example.com', title: 'Do thing' } },
@@ -227,7 +262,7 @@ describe('NotificationProvider', () => {
       expect(mockOnSnapshot).not.toHaveBeenCalled();
     });
 
-    it('shows success toast when inbox is accepted', async () => {
+    it('shows success toast when inbox is accepted (second snapshot onwards)', async () => {
       const callbacks: Array<(snap: unknown) => void> = [];
       mockOnSnapshot.mockImplementation((_ref: unknown, _opts: unknown, cb: (snap: unknown) => void) => {
         callbacks.push(cb);
@@ -236,8 +271,13 @@ describe('NotificationProvider', () => {
 
       renderProvider();
 
+      // Skip first snapshot for each listener
       await act(async () => {
-        // First callback is inbox status listener
+        callbacks[0]!(makeSnapshot([]));
+        callbacks[1]!(makeSnapshot([]));
+      });
+
+      await act(async () => {
         callbacks[0]!(makeSnapshot([
           { type: 'modified', id: 'inbox1', data: { status: 'accepted', title: 'My task' } },
         ]));
@@ -248,7 +288,7 @@ describe('NotificationProvider', () => {
       });
     });
 
-    it('shows error toast when inbox is declined', async () => {
+    it('shows error toast when inbox is declined (second snapshot onwards)', async () => {
       const callbacks: Array<(snap: unknown) => void> = [];
       mockOnSnapshot.mockImplementation((_ref: unknown, _opts: unknown, cb: (snap: unknown) => void) => {
         callbacks.push(cb);
@@ -256,6 +296,11 @@ describe('NotificationProvider', () => {
       });
 
       renderProvider();
+
+      await act(async () => {
+        callbacks[0]!(makeSnapshot([]));
+        callbacks[1]!(makeSnapshot([]));
+      });
 
       await act(async () => {
         callbacks[0]!(makeSnapshot([
@@ -268,7 +313,7 @@ describe('NotificationProvider', () => {
       });
     });
 
-    it('shows toast when task status changes', async () => {
+    it('shows toast when task status changes (second snapshot onwards)', async () => {
       const callbacks: Array<(snap: unknown) => void> = [];
       mockOnSnapshot.mockImplementation((_ref: unknown, _opts: unknown, cb: (snap: unknown) => void) => {
         callbacks.push(cb);
@@ -278,7 +323,11 @@ describe('NotificationProvider', () => {
       renderProvider();
 
       await act(async () => {
-        // Second callback is task status listener
+        callbacks[0]!(makeSnapshot([]));
+        callbacks[1]!(makeSnapshot([]));
+      });
+
+      await act(async () => {
         callbacks[1]!(makeSnapshot([
           { type: 'modified', id: 'task1', data: { status: 'in-progress', title: 'Build feature' } },
         ]));
@@ -289,7 +338,7 @@ describe('NotificationProvider', () => {
       });
     });
 
-    it('shows success toast when task status becomes done', async () => {
+    it('shows success toast when task status becomes done (second snapshot onwards)', async () => {
       const callbacks: Array<(snap: unknown) => void> = [];
       mockOnSnapshot.mockImplementation((_ref: unknown, _opts: unknown, cb: (snap: unknown) => void) => {
         callbacks.push(cb);
@@ -297,6 +346,11 @@ describe('NotificationProvider', () => {
       });
 
       renderProvider();
+
+      await act(async () => {
+        callbacks[0]!(makeSnapshot([]));
+        callbacks[1]!(makeSnapshot([]));
+      });
 
       await act(async () => {
         callbacks[1]!(makeSnapshot([
@@ -318,6 +372,12 @@ describe('NotificationProvider', () => {
 
       renderProvider();
 
+      // Skip first snapshots
+      await act(async () => {
+        callbacks[0]!(makeSnapshot([]));
+        callbacks[1]!(makeSnapshot([]));
+      });
+
       await act(async () => {
         callbacks[0]!(makeSnapshot([
           { type: 'modified', id: 'inbox1', data: { status: 'pending', title: 'My task' } },
@@ -329,7 +389,7 @@ describe('NotificationProvider', () => {
       expect(mockToast.error).not.toHaveBeenCalled();
     });
 
-    it('skips the first snapshot when fromCache is true', async () => {
+    it('always skips the first snapshot (fromCache: true)', async () => {
       const callbacks: Array<(snap: unknown) => void> = [];
       mockOnSnapshot.mockImplementation((_ref: unknown, _opts: unknown, cb: (snap: unknown) => void) => {
         callbacks.push(cb);
@@ -342,6 +402,24 @@ describe('NotificationProvider', () => {
         callbacks[0]!(makeSnapshot([
           { type: 'modified', id: 'inbox1', data: { status: 'accepted', title: 'My task' } },
         ], true /* fromCache */));
+      });
+
+      expect(mockToast.success).not.toHaveBeenCalled();
+    });
+
+    it('always skips the first snapshot (fromCache: false — live server snapshot)', async () => {
+      const callbacks: Array<(snap: unknown) => void> = [];
+      mockOnSnapshot.mockImplementation((_ref: unknown, _opts: unknown, cb: (snap: unknown) => void) => {
+        callbacks.push(cb);
+        return () => {};
+      });
+
+      renderProvider();
+
+      await act(async () => {
+        callbacks[0]!(makeSnapshot([
+          { type: 'modified', id: 'inbox1', data: { status: 'accepted', title: 'Old submission' } },
+        ], false /* fromCache — live server, the bug case */));
       });
 
       expect(mockToast.success).not.toHaveBeenCalled();
@@ -370,6 +448,12 @@ describe('NotificationProvider', () => {
       });
 
       renderProvider();
+
+      // Skip first snapshots
+      await act(async () => {
+        callbacks[0]!(makeSnapshot([]));
+        callbacks[1]!(makeSnapshot([]));
+      });
 
       await act(async () => {
         callbacks[1]!(makeSnapshot([
