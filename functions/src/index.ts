@@ -9,11 +9,10 @@ initializeApp();
 //
 // Fires when a contributor writes a new doc to users/{ownerUID}/inbox/{inboxId}.
 // Looks up all FCM tokens registered under the owner's account and sends a
-// multicast push with both a `notification` field (required for iOS PWA
-// delivery) and a `data` field (used by the SW onBackgroundMessage handler).
-// When the app is in the foreground, Firebase Messaging suppresses the OS
-// notification automatically and delivers only to onMessage — the Sonner toast
-// from NotificationProvider handles foreground display instead.
+// data-only multicast push. The SW onBackgroundMessage handler calls
+// showNotification() to control display, preventing double-notifications.
+// When the app is in the foreground, Firebase delivers only to onMessage and
+// the Sonner toast from NotificationProvider handles display instead.
 //
 // Path:  users/{ownerUID}/inbox/{inboxId}
 
@@ -40,30 +39,16 @@ export const onInboxCreated = onDocumentCreated(
 
     const notificationTitle = `📥 ${contributorEmail} submitted a task`;
 
-    // Send multicast with both notification + data fields.
-    // notification field: required for iOS PWA web push to be delivered at all.
-    // data field:         picked up by the SW onBackgroundMessage handler so it
-    //                     can customise display (icon, badge, etc.).
-    // When the app is foregrounded, Firebase suppresses the OS notification and
-    // delivers only to onMessage — the Sonner toast handles foreground display.
+    // Data-only push: the SW onBackgroundMessage handler calls showNotification()
+    // so we control display on all platforms. No notification field — avoids a
+    // double-notification where both the FCM payload and the SW handler show one.
     const messaging = getMessaging();
     const response = await messaging.sendEachForMulticast({
       tokens,
-      notification: {
-        title: notificationTitle,
-        body: title,
-      },
       data: {
         title: notificationTitle,
         body: title,
         icon: '/icons/icon-192x192.png',
-      },
-      apns: {
-        payload: {
-          aps: {
-            sound: 'default',
-          },
-        },
       },
     });
 
