@@ -47,3 +47,33 @@ onBackgroundMessage(messaging, (payload) => {
     data: payload.data,
   });
 });
+
+// ─── Tap-to-navigate ──────────────────────────────────────────────────────────
+// When the user taps a push notification, focus an existing app window or open
+// a new one. The `?open=inbox` query param tells App.tsx to navigate to the
+// home view (where the inbox nudge is visible).
+
+self.addEventListener('notificationclick', (event: NotificationEvent) => {
+  event.notification.close();
+
+  const urlToOpen = new URL(self.registration.scope);
+  urlToOpen.searchParams.set('open', 'inbox');
+
+  event.waitUntil(
+    self.clients
+      .matchAll({ type: 'window', includeUncontrolled: true })
+      .then((clientList) => {
+        // Focus an already-open tab if one exists
+        for (const client of clientList) {
+          if ('focus' in client) {
+            const clientUrl = new URL(client.url);
+            clientUrl.searchParams.set('open', 'inbox');
+            return (client as WindowClient).navigate(clientUrl.toString())
+              .then((c) => c?.focus());
+          }
+        }
+        // No open tab — open a new one
+        return self.clients.openWindow(urlToOpen.toString());
+      })
+  );
+});

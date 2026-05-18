@@ -13,7 +13,20 @@ import { getAppMode } from './services/contributorService';
 type AppView = TabType | 'settings';
 
 export default function App() {
-  const [activeView, setActiveView] = useState<AppView>('home');
+  // Read the `?open=` param injected by the SW notificationclick handler so
+  // the app deep-links to the right view when launched from a push notification.
+  const initialViewFromNotification = (): AppView => {
+    const param = new URLSearchParams(window.location.search).get('open');
+    if (param) {
+      // Strip the param from the URL without a page reload
+      const clean = new URL(window.location.href);
+      clean.searchParams.delete('open');
+      history.replaceState(null, '', clean.toString());
+    }
+    return 'home'; // inbox nudge lives on the home view
+  };
+
+  const [activeView, setActiveView] = useState<AppView>(initialViewFromNotification);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
   // appMode is read from localStorage on mount and updated when the user
