@@ -26,17 +26,18 @@ We keep the "Brain" of the app separate from the "Face" (UI):
 - **`nudgeService.ts`**: Pure function that takes the current task list, last export date, `isSignedIn`, and `pendingInboxCount` and returns nudge cards for the Home screen. The `backup-overdue` nudge is suppressed when `isSignedIn` is `true`. The `inbox-pending` nudge is emitted first when `pendingInboxCount > 0`. No DB calls, no side effects.
 - **`backupService.ts`**: Pure functions for JSON data export/import. Handles serialisation (`exportData`, `triggerDownload`), validation (`validateBackup`), merge-deduplication (`mergeData`), and last-export tracking via `localStorage` (`getLastExportDate`, `setLastExportDate`). No DB calls — import coordination (clear + seed) lives in `SettingsView`.
 - **`firebaseService.ts`**: Firebase initialisation, auth helpers (`signUpWithEmail`, `signInWithEmail`, `signOutUser`, `onAuthChange`), fire-and-forget sync helpers (`syncUpsertTask/Bucket`, `syncDeleteTask/Bucket`), and initial-sync helpers (`fetchCloudData`, `pushAllToCloud`, `runInitialSync`). All sync functions are no-ops when the user is signed out; errors are swallowed so they never crash local writes.
+- **`fcmService.ts`**: Firebase Cloud Messaging client helpers. `isFcmSupported()` checks browser/device support. `getNotificationPermission()` returns the current `Notification.permission` state. `requestPermissionAndSaveToken()` requests OS permission (must be called from a user gesture), obtains the FCM registration token via `getToken`, and stores it under `users/{uid}/fcmTokens/{token}` in Firestore with a `serverTimestamp` and `platform` field. Returns `null` on failure (unsupported, denied, or token fetch error). Used exclusively by `PushNotificationsCard` in `SettingsView`.
 - **`contributorService.ts`**: All Contributor Mode logic. Invite code generation/redemption (`generateInviteCode`, `redeemInviteCode`), permission CRUD (`getContributorPermission`, `removeContributorPermission`), inbox CRUD (`submitInboxTask`, `fetchPendingInboxItems`, `getPendingInboxCount`, `acceptInboxItem`, `declineInboxItem`, `deleteInboxItem`), contributor submission queries (`getContributorSubmissions`), live task status fetch (`getAcceptedTaskStatus`), `localStorage` helpers for app mode (`getAppMode`, `setAppMode`, `getStoredOwnerUID`, `storeOwnerInfo`, `clearOwnerInfo`), and dismiss helpers (`getDismissedSubmissionIds`, `dismissSubmission`, `clearDismissedSubmissions`). All Firestore writes target `users/{uid}/inbox` or `invites/{code}` — never the owner's `tasks` collection, preserving data isolation. The one read exception is `getAcceptedTaskStatus`, which reads a single owner task using `taskId` stored on the accepted inbox item; the Firestore security rule gates this via `resource.data.contributorUID == request.auth.uid`.
 
 ### C. Auth / Sync Layer (`context/AuthContext.tsx`)
 - **`AuthContext.tsx`**: Wraps `onAuthStateChanged`. Exposes `user`, `isSignedIn`, `authLoading`, `syncStatus` (`idle | syncing | synced | error`), and `signIn/signUp/signOut` helpers.
-- **`NotificationProvider.tsx`**: Mounts real-time Firestore `onSnapshot` listeners and renders a global `<Toaster />` (Sonner, `richColors`, `top-center`). In **owner mode** it listens to `users/{uid}/inbox` for new submissions and shows `📥 New submission from …` toasts. In **contributor mode** it listens to the owner's inbox (filtered by `contributorUID`) for `accepted`/`declined` status changes and to the owner's tasks (filtered by `contributorUID`) for any status change. All listeners skip the first snapshot when `fromCache === true` to prevent cold-start spam, and use `notificationsSeenService` to deduplicate across sessions. Wrapped around `<App />` inside `AuthProvider` in `main.tsx`.
+- **`NotificationProvider.tsx`** (PR 1 — foreground toasts): Mounts real-time Firestore `onSnapshot` listeners and renders a global `<Toaster />` (Sonner, `richColors`, `top-center`). In **owner mode** it listens to `users/{uid}/inbox` for new submissions and shows `📥 New submission from …` toasts. In **contributor mode** it listens to the owner's inbox (filtered by `contributorUID`) for `accepted`/`declined` status changes and to the owner's tasks (filtered by `contributorUID`) for any status change. All listeners skip the first snapshot when `fromCache === true` to prevent cold-start spam, and use `notificationsSeenService` to deduplicate across sessions. Wrapped around `<App />` inside `AuthProvider` in `main.tsx`.
 - On mount the app shows a loading screen until both `authLoading` and `isInitialized` are `false`.
 - On first sign-in per session (deduped via `useRef<Set<string>>`), `runInitialSync` is called; `syncStatus` transitions `idle → syncing → synced | error`.
 - `signOut` resets `syncStatus` to `idle`.
 
 ### D. View Layer (`views/`, `App.tsx`)
-- **`App.tsx`**: The orchestrator. Manages the active view (`AppView = TabType | 'settings'`) and global navigation state. The `BottomNav` is hidden when Settings is active.
+- **`App.tsx`**: The orchestrator. Manages the active view (`AppView = TabType | 'settings'`) and global navigation state. The `BottomNav` is hidden when Settings is active. On mount it reads the `?open=` query param (injected by the SW `notificationclick` handler) and navigates to the appropriate view before stripping the param via `history.replaceState`.
 - **View Components** (`views/`): Flat hierarchy. Views fetch what they need from the `repository` via `useLiveQuery` on mount.
 - **`components/`**: Shared, reusable UI primitives (Button, Card, Modal, BottomNav).
 
@@ -122,7 +123,8 @@ Completed tasks are accessible by filtering for `done` status from the Home view
 - **Auth**: Email/password via Firebase Auth. Handled in `firebaseService.ts`; auth state surfaced app-wide via `AuthContext`.
 - **Firestore structure**:
   - `users/{uid}/tasks/{taskId}` and `users/{uid}/buckets/{bucketId}` — owner's local data, mirrored from IndexedDB. Tasks include `contributorUID` when created via inbox acceptance.
-  - `users/{ownerUID}/inbox/{inboxId}` — contributor inbox items. **Never written to IndexedDB.** Contributor has create access (with matching `contributorUID`); owner has full read/write.
+  - `users/{ownerUID}/inbox/{inboxId}` — contributor inbox items. **Never written to IndexedDB.** Contributor has create access (with matching `contributorUID`); owner has full read/write. **Creating a doc here also triggers the `onInboxCreated` Cloud Function** which sends a push notification to all of the owner's registered FCM tokens.
+  - `users/{uid}/fcmTokens/{token}` — FCM registration tokens, one doc per device/browser. Written by `fcmService.requestPermissionAndSaveToken` on the client; read by the `onInboxCreated` Cloud Function to fan out push notifications. Stale tokens (rejected by FCM) are pruned automatically by the function after each send.
   - `invites/{code}` — invite codes with 7-day expiry. Anyone authenticated can read (to redeem); only the owner can write.
   - `users/{contributorUID}/permissions/contributor` — stores `ownerUID` and `ownerEmail` after invite redemption. Contributor reads/writes their own document only.
   - JS `Date` fields are serialised to Firestore `Timestamp` on write and deserialised back on read.
@@ -135,7 +137,46 @@ Completed tasks are accessible by filtering for `done` status from the Home view
   - Invites: `allow create: if request.auth != null; allow read, update: if request.auth != null`.
 - **Environment variables**: All Firebase config values are loaded from `VITE_FIREBASE_*` env vars (never committed). See `.env.example` for required keys.
 
-## 6. Data Export / Import (JSON)
+## 6. Background Push Notifications (FCM)
+
+Nooks delivers OS-level push notifications even when the app is closed, via Firebase Cloud Messaging (FCM). The system has three layers:
+
+### A. Token Registration (Client)
+`SettingsView` → `PushNotificationsCard` → `fcmService.requestPermissionAndSaveToken()`
+1. User taps "Enable Push Notifications" in Settings (requires sign-in).
+2. `Notification.requestPermission()` prompts the OS permission dialog.
+3. On grant, `firebase/messaging` `getToken(messaging, { vapidKey })` registers the device with FCM.
+4. The token is stored at `users/{uid}/fcmTokens/{token}` in Firestore with `createdAt` and `platform` fields.
+5. VAPID key is loaded from `VITE_FIREBASE_VAPID_KEY` (never committed).
+
+### B. Cloud Function Trigger (Server)
+`functions/src/index.ts` — `onInboxCreated` (Firebase Cloud Functions v2, Node 20, `us-central1`)
+- Fires on every new `users/{ownerUID}/inbox/{inboxId}` document.
+- Reads all `users/{ownerUID}/fcmTokens` docs to collect the owner's registered tokens.
+- Sends a **data-only multicast** via Admin SDK `messaging.sendEachForMulticast()`. No `notification` field — the SW handler controls display to prevent double-toasts when the app is in the foreground.
+- Prunes tokens that FCM reports as invalid/unregistered.
+
+### C. Service Worker Handler (Client)
+`src/sw.ts` — uses `firebase/messaging/sw` (the SW-compatible variant of the client SDK).
+- `onBackgroundMessage`: receives data-only pushes when the app is in the background/closed and calls `self.registration.showNotification()` to display an OS notification.
+- `notificationclick`: closes the notification, focuses an existing app window or opens a new one at `?open=inbox`, so the user lands on the home view where the inbox nudge is shown.
+- Firebase config is **hardcoded** in the SW (no `import.meta.env` in SW context); these are all public client-side values.
+- App.tsx reads `?open=` on mount via a lazy `useState` initialiser and strips the param with `history.replaceState`.
+
+### Notification Flow (End-to-End)
+```
+Contributor submits → Firestore inbox doc created
+  → onInboxCreated Cloud Function fires
+    → fetches owner's FCM tokens
+    → sendEachForMulticast (data-only)
+      → [app open]   NotificationProvider Sonner toast (PR 1)
+      → [app closed] SW onBackgroundMessage → showNotification()
+                       → user taps → notificationclick → ?open=inbox → HomeView
+```
+
+## 7. Data Export / Import (JSON)
+
+
 
 Manual JSON backup flow — preserved for offline/legacy use:
 
@@ -145,7 +186,7 @@ Manual JSON backup flow — preserved for offline/legacy use:
 - **Staleness Nudge**: `nudgeService.ts` emits a `backup-overdue` nudge when `lastExportDate` is `null` or ≥ 3 days old **and** `isSignedIn` is `false`. When signed in, cloud sync is considered an adequate backup, so the nudge is suppressed.
 - **`localStorage` key**: `nooks_last_export` — stores ISO timestamp of last successful export.
 
-## 7. Contributor Mode
+## 8. Contributor Mode
 
 Contributor Mode lets a trusted person (the contributor) submit tasks into the owner's inbox without having read access to the owner's full task list.
 
@@ -180,14 +221,14 @@ Contributor Mode lets a trusted person (the contributor) submit tasks into the o
 1. Owner opens Settings → Sharing section → "Generate Invite" → `generateInviteCode(ownerUID, ownerEmail)` creates `invites/{code}` with a 7-day expiry.
 2. Contributor switches to "Contributor" mode in Settings, enters code → `redeemInviteCode(code, contributorUID, contributorEmail)` validates expiry and redemption, writes `users/{contributorUID}/permissions/contributor`, stores ownerUID/email in `localStorage`.
 
-## 8. Testing Philosophy
+## 9. Testing Philosophy
 - **Unit Tests**: Located next to the source file (e.g., `nudgeService.test.ts`). Focus on pure logic.
 - **Integration/View Tests**: Also located next to the source file (e.g., `HomeView.test.tsx`). Test rendered behaviour, user interactions, and navigation wiring using React Testing Library. `dexie-react-hooks`, `motion/react`, and `services/repository` are mocked so tests run without a real DB or animation engine.
 - **Test Setup**: `src/tests/setup.ts` — provides a fresh `fake-indexeddb` instance before each test.
 - **Factories**: `src/tests/factories.ts` — always use factories to generate mock data. Never hardcode objects in tests.
 - **Coverage Target**: >85% overall, >80% for any modified file. All views (`App.tsx`, `HomeView`, `TasksView`, `CalendarView`) are covered at ≥90% statement coverage.
 
-## 9. Maintenance Rules
+## 10. Maintenance Rules
 - **Schema Changes**: If you update `db.ts` or the types in `db.ts`, you MUST update this document.
 - **New Services**: If you add a file to `/services`, update the Business Logic Layer section above.
 - **New Views**: If you add a view, update the Navigation & Views section above.

@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { SettingsView } from './SettingsView';
 import * as backupService from '../services/backupService';
@@ -115,6 +115,12 @@ const signedInAuthWithUID = (syncStatus: 'idle' | 'syncing' | 'synced' | 'error'
   signIn: mockSignIn,
   signUp: mockSignUp,
   signOut: mockSignOut,
+});
+
+// Flush any pending microtask-resolution state updates (e.g. PushNotificationsCard's
+// isFcmSupported useEffect) so they don't bleed into the next test as act() warnings.
+afterEach(async () => {
+  await act(async () => {});
 });
 
 beforeEach(() => {
