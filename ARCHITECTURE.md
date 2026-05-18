@@ -26,7 +26,7 @@ We keep the "Brain" of the app separate from the "Face" (UI):
 - **`nudgeService.ts`**: Pure function that takes the current task list, last export date, `isSignedIn`, and `pendingInboxCount` and returns nudge cards for the Home screen. The `backup-overdue` nudge is suppressed when `isSignedIn` is `true`. The `inbox-pending` nudge is emitted first when `pendingInboxCount > 0`. No DB calls, no side effects.
 - **`backupService.ts`**: Pure functions for JSON data export/import. Handles serialisation (`exportData`, `triggerDownload`), validation (`validateBackup`), merge-deduplication (`mergeData`), and last-export tracking via `localStorage` (`getLastExportDate`, `setLastExportDate`). No DB calls — import coordination (clear + seed) lives in `SettingsView`.
 - **`firebaseService.ts`**: Firebase initialisation, auth helpers (`signUpWithEmail`, `signInWithEmail`, `signOutUser`, `onAuthChange`), fire-and-forget sync helpers (`syncUpsertTask/Bucket`, `syncDeleteTask/Bucket`), and initial-sync helpers (`fetchCloudData`, `pushAllToCloud`, `runInitialSync`). All sync functions are no-ops when the user is signed out; errors are swallowed so they never crash local writes.
-- **`fcmService.ts`**: Firebase Cloud Messaging client helpers. `isFcmSupported()` checks browser/device support. `getNotificationPermission()` returns the current `Notification.permission` state. `requestPermissionAndSaveToken()` requests OS permission (must be called from a user gesture), obtains the FCM registration token via `getToken`, and stores it under `users/{uid}/fcmTokens/{token}` in Firestore with a `serverTimestamp` and `platform` field. Returns `null` on failure (unsupported, denied, or token fetch error). Used exclusively by `PushNotificationsCard` in `SettingsView`.
+- **`fcmService.ts`**: Firebase Cloud Messaging client helpers. `isFcmSupported()` checks browser/device support. `getNotificationPermission()` returns the current `Notification.permission` state. `requestPermissionAndSaveToken()` requests OS permission (must be called from a user gesture), resolves the active SW registration via `navigator.serviceWorker.ready` (so Firebase uses our custom `/sw.js` rather than looking for the default `/firebase-messaging-sw.js`), obtains the FCM registration token via `getToken`, and stores it under `users/{uid}/fcmTokens/{token}` in Firestore with a `serverTimestamp` and `platform` field. Returns `null` on failure (unsupported, denied, or token fetch error). `PushNotificationsCard` in `SettingsView` calls this from a user gesture on first enable, and also automatically on mount when permission is already `'granted'` (ensures the token is registered even if a previous attempt failed silently, e.g. due to a missing env var in a previous deployment).
 - **`contributorService.ts`**: All Contributor Mode logic. Invite code generation/redemption (`generateInviteCode`, `redeemInviteCode`), permission CRUD (`getContributorPermission`, `removeContributorPermission`), inbox CRUD (`submitInboxTask`, `fetchPendingInboxItems`, `getPendingInboxCount`, `acceptInboxItem`, `declineInboxItem`, `deleteInboxItem`), contributor submission queries (`getContributorSubmissions`), live task status fetch (`getAcceptedTaskStatus`), `localStorage` helpers for app mode (`getAppMode`, `setAppMode`, `getStoredOwnerUID`, `storeOwnerInfo`, `clearOwnerInfo`), and dismiss helpers (`getDismissedSubmissionIds`, `dismissSubmission`, `clearDismissedSubmissions`). All Firestore writes target `users/{uid}/inbox` or `invites/{code}` — never the owner's `tasks` collection, preserving data isolation. The one read exception is `getAcceptedTaskStatus`, which reads a single owner task using `taskId` stored on the accepted inbox item; the Firestore security rule gates this via `resource.data.contributorUID == request.auth.uid`.
 
 ### C. Auth / Sync Layer (`context/AuthContext.tsx`)
@@ -130,8 +130,9 @@ Completed tasks are accessible by filtering for `done` status from the Home view
   - JS `Date` fields are serialised to Firestore `Timestamp` on write and deserialised back on read.
 - **Per-write sync**: Every `repository.add/update/delete` call mirrors the change to Firestore (fire-and-forget; no-op when signed out).
 - **Initial sync**: On first sign-in per session, `runInitialSync` fetches cloud data, merges cloud→local using `mergeData` (union, no overwrites), then pushes the full updated local store back to Firestore.
-- **Security rules** (must be applied in Firebase Console):
-  - Owner data: `allow read, write: if request.auth != null && request.auth.uid == userId` — fully isolated per user.
+- **Security rules**: Managed in `firestore.rules` (committed to the repo) and deployed with `firebase deploy --only firestore:rules`. Key rules:
+  - Owner data (tasks, buckets, fcmTokens): `allow read, write: if request.auth != null && request.auth.uid == userId` — fully isolated per user.
+  - FCM tokens: same owner-only rule — clients write their own tokens; the Cloud Function reads them via Admin SDK (bypasses rules).
   - Inbox: contributor `create` if `request.resource.data.contributorUID == request.auth.uid`; contributor `read, delete` if `resource.data.contributorUID == request.auth.uid`.
   - Live task status: `allow read: if request.auth != null && resource.data.contributorUID == request.auth.uid` — lets the contributor read only tasks they originally submitted.
   - Invites: `allow create: if request.auth != null; allow read, update: if request.auth != null`.
@@ -145,9 +146,10 @@ Nooks delivers OS-level push notifications even when the app is closed, via Fire
 `SettingsView` → `PushNotificationsCard` → `fcmService.requestPermissionAndSaveToken()`
 1. User taps "Enable Push Notifications" in Settings (requires sign-in).
 2. `Notification.requestPermission()` prompts the OS permission dialog.
-3. On grant, `firebase/messaging` `getToken(messaging, { vapidKey })` registers the device with FCM.
+3. On grant, `navigator.serviceWorker.ready` resolves the active SW registration, which is passed to `getToken(messaging, { vapidKey, serviceWorkerRegistration })` so Firebase uses our custom `/sw.js` rather than looking for the default `/firebase-messaging-sw.js`.
 4. The token is stored at `users/{uid}/fcmTokens/{token}` in Firestore with `createdAt` and `platform` fields.
-5. VAPID key is loaded from `VITE_FIREBASE_VAPID_KEY` (never committed).
+5. VAPID key is loaded from `VITE_FIREBASE_VAPID_KEY` (never committed; must be set in the deployment environment).
+6. If permission is already `'granted'` on subsequent mounts (e.g. returning visits), token registration is retried automatically in the background — ensuring tokens are saved even if a previous attempt failed silently.
 
 ### B. Cloud Function Trigger (Server)
 `functions/src/index.ts` — `onInboxCreated` (Firebase Cloud Functions v2, Node 20, `us-central1`)
@@ -175,8 +177,6 @@ Contributor submits → Firestore inbox doc created
 ```
 
 ## 7. Data Export / Import (JSON)
-
-
 
 Manual JSON backup flow — preserved for offline/legacy use:
 
@@ -232,3 +232,5 @@ Contributor Mode lets a trusted person (the contributor) submit tasks into the o
 - **Schema Changes**: If you update `db.ts` or the types in `db.ts`, you MUST update this document.
 - **New Services**: If you add a file to `/services`, update the Business Logic Layer section above.
 - **New Views**: If you add a view, update the Navigation & Views section above.
+- **New Firestore Collections**: If you add a new subcollection, add a matching rule to `firestore.rules` and deploy with `firebase deploy --only firestore:rules`. Firestore denies all reads and writes by default — missing rules cause silent failures.
+- **New Cloud Functions**: Deploy with `firebase deploy --only functions`. The runtime is Node 20 (`us-central1`); update `functions/package.json` `engines.node` if upgrading.
