@@ -1,0 +1,44 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Owner data: tasks and buckets — fully isolated per user
+    match /users/{userId}/tasks/{taskId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      // Contributor read exception: lets a contributor read a single task they submitted
+      allow read: if request.auth != null && resource.data.contributorUID == request.auth.uid;
+    }
+
+    match /users/{userId}/buckets/{bucketId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Inbox: contributor can create and read/delete their own submissions; owner has full access
+    match /users/{userId}/inbox/{inboxId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow create: if request.auth != null && request.resource.data.contributorUID == request.auth.uid;
+      allow read, delete: if request.auth != null && resource.data.contributorUID == request.auth.uid;
+    }
+
+    // FCM tokens: user reads/writes their own tokens only
+    match /users/{userId}/fcmTokens/{tokenId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Notification preferences: owner read/write only
+    match /users/{userId}/notificationPrefs {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Contributor permissions: contributor reads/writes their own document only
+    match /users/{userId}/permissions/contributor {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Invite codes: any authenticated user can create or read; owner can update (mark redeemed)
+    match /invites/{code} {
+      allow create: if request.auth != null;
+      allow read, update: if request.auth != null;
+    }
+  }
+}
