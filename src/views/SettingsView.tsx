@@ -1,6 +1,6 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { formatDistanceToNow, addDays, format } from 'date-fns';
-import { Download, Upload, ArrowLeft, AlertCircle, Cloud, CloudOff, LogIn, UserPlus, LogOut, CheckCircle2, Loader2, Copy, Users } from 'lucide-react';
+import { Download, Upload, ArrowLeft, AlertCircle, Cloud, CloudOff, LogIn, UserPlus, LogOut, CheckCircle2, Loader2, Copy, Users, Bell, BellOff } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { Modal } from '../components/Modal';
@@ -30,6 +30,11 @@ import {
 } from '../services/contributorService';
 import { useAuth } from '../context/AuthContext';
 import { cn } from '../utils/cn';
+import {
+  isFcmSupported,
+  getNotificationPermission,
+  requestPermissionAndSaveToken,
+} from '../services/fcmService';
 
 interface SettingsViewProps {
   onBack: () => void;
@@ -276,6 +281,71 @@ const AppModeCard: React.FC<{ onModeChange: (mode: AppMode) => void }> = ({ onMo
   );
 };
 
+// ─── Push Notifications Card ──────────────────────────────────────────────────
+
+const PushNotificationsCard: React.FC = () => {
+  const [supported, setSupported] = useState<boolean | null>(null);
+  const [permission, setPermission] = useState<NotificationPermission>('default');
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    isFcmSupported().then(setSupported);
+    setPermission(getNotificationPermission());
+  }, []);
+
+  const handleEnable = async () => {
+    setLoading(true);
+    const token = await requestPermissionAndSaveToken();
+    setPermission(token ? 'granted' : 'denied');
+    setLoading(false);
+  };
+
+  // Don't render until we know if FCM is supported
+  if (supported === null) return null;
+
+  // Hide entirely on unsupported browsers (no PWA install, no iOS <16.4, etc.)
+  if (!supported) return null;
+
+  return (
+    <Card className="space-y-3" data-testid="push-notifications-card">
+      <div className="flex items-center gap-2">
+        <Bell size={18} className="text-nook-ink/60" />
+        <span className="text-sm font-bold text-nook-ink">Push Notifications</span>
+      </div>
+
+      {permission === 'granted' && (
+        <div className="flex items-center gap-2 text-green-600 text-sm font-medium" data-testid="push-enabled">
+          <CheckCircle2 size={16} />
+          Notifications enabled
+        </div>
+      )}
+
+      {permission === 'denied' && (
+        <p className="text-sm text-nook-ink/60" data-testid="push-denied">
+          Notifications are blocked. To enable them, go to your browser or phone settings and allow notifications for this site.
+        </p>
+      )}
+
+      {permission === 'default' && (
+        <div className="space-y-2">
+          <p className="text-xs text-nook-ink/50">
+            Get notified when submissions arrive or tasks change — even when the app is closed.
+          </p>
+          <Button
+            className="w-full py-3 flex items-center justify-center gap-2 text-sm"
+            onClick={handleEnable}
+            disabled={loading}
+            data-testid="push-enable-button"
+          >
+            {loading ? <Loader2 size={16} className="animate-spin" /> : <Bell size={16} />}
+            Enable Push Notifications
+          </Button>
+        </div>
+      )}
+    </Card>
+  );
+};
+
 // ─── Cloud Backup Card ────────────────────────────────────────────────────────
 
 const CloudBackupCard: React.FC = () => {
@@ -452,6 +522,7 @@ const CloudBackupCard: React.FC = () => {
 // ─── SettingsView ──────────────────────────────────────────────────────────────
 
 export const SettingsView: React.FC<SettingsViewProps> = ({ onBack, onModeChange }) => {
+  const { isSignedIn } = useAuth();
   const [lastExport, setLastExport] = useState<Date | null>(getLastExportDate);
   const [importError, setImportError] = useState<string | null>(null);
   const [importSuccess, setImportSuccess] = useState<string | null>(null);
@@ -602,6 +673,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onBack, onModeChange
         <h2 className="text-xs font-bold uppercase tracking-widest text-nook-ink/40 px-1">Cloud Backup</h2>
         <CloudBackupCard />
       </section>
+
+      {/* Push Notifications section — only when signed in */}
+      {isSignedIn && (
+        <section className="space-y-4">
+          <h2 className="text-xs font-bold uppercase tracking-widest text-nook-ink/40 px-1">Notifications</h2>
+          <PushNotificationsCard />
+        </section>
+      )}
 
       {/* JSON Backup section */}
       <section className="space-y-4">

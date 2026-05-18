@@ -53,6 +53,18 @@ vi.mock('../db', () => ({
   },
 }));
 
+// ─── Mock fcmService ─────────────────────────────────────────────────────────
+
+const mockIsFcmSupported = vi.fn(async () => true);
+const mockGetNotificationPermission = vi.fn(() => 'default' as NotificationPermission);
+const mockRequestPermissionAndSaveToken = vi.fn(async () => null as string | null);
+
+vi.mock('../services/fcmService', () => ({
+  isFcmSupported: () => mockIsFcmSupported(),
+  getNotificationPermission: () => mockGetNotificationPermission(),
+  requestPermissionAndSaveToken: () => mockRequestPermissionAndSaveToken(),
+}));
+
 // ─── Mock contributorService ──────────────────────────────────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -113,6 +125,10 @@ beforeEach(() => {
   vi.mocked(backupService.getLastExportDate).mockReturnValue(null);
   // Default: signed out
   mockUseAuth.mockReturnValue(signedOutAuth);
+  // Default fcmService mocks
+  mockIsFcmSupported.mockResolvedValue(true);
+  mockGetNotificationPermission.mockReturnValue('default');
+  mockRequestPermissionAndSaveToken.mockResolvedValue(null);
   // Default contributorService mocks
   mockGetAppMode.mockReturnValue('owner');
   mockGetStoredOwnerEmail.mockReturnValue(null);
@@ -577,6 +593,96 @@ describe('SettingsView', () => {
       // linked-owner-card shows after permission loads and setLinkedEmail fires
       expect(await screen.findByTestId('linked-owner-card')).toBeInTheDocument();
       expect(screen.getByText('linked@owner.com')).toBeInTheDocument();
+    });
+  });
+
+  // ─── PushNotificationsCard ────────────────────────────────────────────────
+
+  describe('PushNotificationsCard', () => {
+    beforeEach(() => {
+      // Sign in so the Notifications section renders
+      mockUseAuth.mockReturnValue(signedInAuthWithUID());
+    });
+
+    it('does not render the Notifications section when signed out', async () => {
+      mockUseAuth.mockReturnValue(signedOutAuth);
+      render(<SettingsView onBack={mockOnBack} />);
+      // Wait briefly — isFcmSupported is async so give the card a chance to mount
+      await waitFor(() => {
+        expect(screen.queryByTestId('push-notifications-card')).not.toBeInTheDocument();
+      });
+    });
+
+    it('does not render the push card when FCM is not supported', async () => {
+      mockIsFcmSupported.mockResolvedValue(false);
+      render(<SettingsView onBack={mockOnBack} />);
+      await waitFor(() => {
+        expect(screen.queryByTestId('push-notifications-card')).not.toBeInTheDocument();
+      });
+    });
+
+    it('renders the push card with Enable button when permission is default', async () => {
+      mockGetNotificationPermission.mockReturnValue('default');
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(await screen.findByTestId('push-notifications-card')).toBeInTheDocument();
+      expect(screen.getByTestId('push-enable-button')).toBeInTheDocument();
+    });
+
+    it('renders the "enabled" state when permission is already granted', async () => {
+      mockGetNotificationPermission.mockReturnValue('granted');
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(await screen.findByTestId('push-enabled')).toBeInTheDocument();
+      expect(screen.queryByTestId('push-enable-button')).not.toBeInTheDocument();
+    });
+
+    it('renders the "blocked" message when permission is denied', async () => {
+      mockGetNotificationPermission.mockReturnValue('denied');
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(await screen.findByTestId('push-denied')).toBeInTheDocument();
+      expect(screen.queryByTestId('push-enable-button')).not.toBeInTheDocument();
+    });
+
+    it('transitions to enabled state after a successful token request', async () => {
+      mockGetNotificationPermission.mockReturnValue('default');
+      mockRequestPermissionAndSaveToken.mockResolvedValue('valid-fcm-token');
+      render(<SettingsView onBack={mockOnBack} />);
+
+      const button = await screen.findByTestId('push-enable-button');
+      await userEvent.click(button);
+
+      expect(mockRequestPermissionAndSaveToken).toHaveBeenCalledOnce();
+      expect(await screen.findByTestId('push-enabled')).toBeInTheDocument();
+    });
+
+    it('transitions to denied state when requestPermission is rejected', async () => {
+      mockGetNotificationPermission.mockReturnValue('default');
+      mockRequestPermissionAndSaveToken.mockResolvedValue(null); // null = denied/failed
+      render(<SettingsView onBack={mockOnBack} />);
+
+      const button = await screen.findByTestId('push-enable-button');
+      await userEvent.click(button);
+
+      expect(mockRequestPermissionAndSaveToken).toHaveBeenCalledOnce();
+      // Stays on default OR transitions to denied — either way the enable button is gone
+      // (our component sets 'denied' on null return)
+      expect(await screen.findByTestId('push-denied')).toBeInTheDocument();
+    });
+
+    it('disables the Enable button while the request is in flight', async () => {
+      mockGetNotificationPermission.mockReturnValue('default');
+      let resolve!: (v: string | null) => void;
+      mockRequestPermissionAndSaveToken.mockReturnValue(new Promise(r => { resolve = r; }));
+      render(<SettingsView onBack={mockOnBack} />);
+
+      const button = await screen.findByTestId('push-enable-button');
+      fireEvent.click(button);
+
+      // Button should be disabled while loading
+      await waitFor(() => expect(button).toBeDisabled());
+
+      // Resolve and confirm it recovers
+      resolve('token');
+      await waitFor(() => expect(screen.getByTestId('push-enabled')).toBeInTheDocument());
     });
   });
 });
