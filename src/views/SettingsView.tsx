@@ -290,7 +290,16 @@ const PushNotificationsCard: React.FC = () => {
 
   useEffect(() => {
     isFcmSupported().then(setSupported);
-    setPermission(getNotificationPermission());
+    const current = getNotificationPermission();
+    setPermission(current);
+
+    // If permission was already granted (e.g. from a previous session where the
+    // token failed to save due to a missing VAPID key), silently re-register the
+    // token. requestPermission() returns 'granted' immediately without a dialog
+    // so there is no user-gesture restriction here.
+    if (current === 'granted') {
+      requestPermissionAndSaveToken();
+    }
   }, []);
 
   const handleEnable = async () => {

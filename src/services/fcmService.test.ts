@@ -47,9 +47,22 @@ import {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+const mockSwRegistration = { scope: '/' } as ServiceWorkerRegistration;
+
 function setNotificationPermission(permission: NotificationPermission) {
   Object.defineProperty(globalThis, 'Notification', {
     value: { permission, requestPermission: vi.fn().mockResolvedValue(permission) },
+    writable: true,
+    configurable: true,
+  });
+}
+
+function mockServiceWorkerReady() {
+  Object.defineProperty(globalThis, 'navigator', {
+    value: {
+      ...globalThis.navigator,
+      serviceWorker: { ready: Promise.resolve(mockSwRegistration) },
+    },
     writable: true,
     configurable: true,
   });
@@ -66,6 +79,7 @@ describe('fcmService', () => {
     mockGetMessaging.mockReturnValue({});
     mockServerTimestamp.mockReturnValue('mock-timestamp');
     setNotificationPermission('default');
+    mockServiceWorkerReady();
   });
 
   describe('isFcmSupported', () => {
@@ -152,6 +166,20 @@ describe('fcmService', () => {
           token: 'valid-fcm-token',
           createdAt: 'mock-timestamp',
         })
+      );
+    });
+
+    it('passes the active SW registration to getToken', async () => {
+      mockIsSupported.mockResolvedValue(true);
+      mockAuth.currentUser = { uid: 'user-1' };
+      setNotificationPermission('granted');
+      mockGetToken.mockResolvedValue('valid-fcm-token');
+
+      await requestPermissionAndSaveToken();
+
+      expect(mockGetToken).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ serviceWorkerRegistration: mockSwRegistration })
       );
     });
 
