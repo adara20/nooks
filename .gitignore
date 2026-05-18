@@ -7,3 +7,5 @@ coverage/
 .env*
 !.env.example
 tasks/
+functions/lib/
+functions/node_modules/
