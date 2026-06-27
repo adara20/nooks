@@ -56,15 +56,25 @@ const AppModeCard: React.FC<{ onModeChange: (mode: AppMode) => void }> = ({ onMo
   const [redeemLoading, setRedeemLoading] = useState(false);
   const [redeemSuccess, setRedeemSuccess] = useState(false);
   const [linkedEmail, setLinkedEmail] = useState<string | null>(() => getStoredOwnerEmail());
+  const [linkStatus, setLinkStatus] = useState<'checking' | 'ok' | 'error' | null>(null);
 
-  // Load contributor permission on mount (if in contributor mode and signed in)
+  // Load contributor permission on mount (if in contributor mode and signed in).
+  // Also sets linkStatus so the UI can show a live connection check.
   React.useEffect(() => {
     if (mode === 'contributor' && isSignedIn && user) {
+      setLinkStatus('checking');
       getContributorPermission(user.uid)
         .then(perm => {
-          if (perm) setLinkedEmail(perm.ownerEmail);
+          if (perm) {
+            setLinkedEmail(perm.ownerEmail);
+            setLinkStatus('ok');
+          } else {
+            setLinkStatus('error');
+          }
         })
-        .catch(() => {});
+        .catch(() => setLinkStatus('error'));
+    } else {
+      setLinkStatus(null);
     }
   }, [mode, isSignedIn, user]);
 
@@ -246,9 +256,20 @@ const AppModeCard: React.FC<{ onModeChange: (mode: AppMode) => void }> = ({ onMo
               ✅ Linked! Switch back to see your home screen.
             </div>
           ) : linkedEmail ? (
-            <div className="p-3 bg-green-50 rounded-xl" data-testid="linked-owner-card">
-              <p className="text-[11px] font-bold uppercase tracking-widest text-nook-ink/40">Linked to</p>
-              <p className="text-sm font-bold text-nook-ink">{linkedEmail}</p>
+            <div className="space-y-2">
+              <div className="p-3 bg-green-50 rounded-xl" data-testid="linked-owner-card">
+                <p className="text-[11px] font-bold uppercase tracking-widest text-nook-ink/40">Linked to</p>
+                <p className="text-sm font-bold text-nook-ink">{linkedEmail}</p>
+              </div>
+              {linkStatus === 'checking' && (
+                <p className="text-xs text-nook-ink/40 px-1" data-testid="link-status-checking">Verifying connection...</p>
+              )}
+              {linkStatus === 'ok' && (
+                <p className="text-xs text-green-600 font-medium px-1" data-testid="link-status-ok">Connection verified</p>
+              )}
+              {linkStatus === 'error' && (
+                <p className="text-xs text-red-500 font-medium px-1" data-testid="link-status-error">Could not reach linked account — check your connection and try again</p>
+              )}
             </div>
           ) : (
             <div className="space-y-2">

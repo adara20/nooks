@@ -21,6 +21,9 @@ const mockClearDismissedSubmissions = vi.fn();
 
 const mockGetStoredOwnerUID = vi.fn(() => 'owner-uid-123');
 const mockGetStoredOwnerEmail = vi.fn(() => 'owner@example.com');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockGetContributorPermission = vi.fn<any>(async () => null);
+const mockStoreOwnerInfo = vi.fn();
 
 vi.mock('../services/contributorService', () => ({
   getContributorSubmissions: (ownerUID: string, contributorUID: string) =>
@@ -34,6 +37,8 @@ vi.mock('../services/contributorService', () => ({
   clearDismissedSubmissions: () => mockClearDismissedSubmissions(),
   getStoredOwnerUID: () => mockGetStoredOwnerUID(),
   getStoredOwnerEmail: () => mockGetStoredOwnerEmail(),
+  getContributorPermission: (uid: string) => mockGetContributorPermission(uid),
+  storeOwnerInfo: (uid: string, email: string) => mockStoreOwnerInfo(uid, email),
 }));
 
 vi.mock('../context/AuthContext', () => ({
@@ -95,6 +100,7 @@ beforeEach(() => {
   mockGetDismissedSubmissionIds.mockReturnValue(new Set<string>());
   mockGetStoredOwnerUID.mockReturnValue('owner-uid-123');
   mockGetStoredOwnerEmail.mockReturnValue('owner@example.com');
+  mockGetContributorPermission.mockResolvedValue(null);
 });
 
 // ─── Tests ─────────────────────────────────────────────────────────────────────
@@ -468,17 +474,35 @@ describe('ContributorHomeView', () => {
   });
 
   describe('no owner uid edge case', () => {
-    it('shows empty state when ownerUID is null', async () => {
+    it('shows empty state when ownerUID is null and recovery returns nothing', async () => {
       mockGetStoredOwnerUID.mockReturnValue(null);
+      mockGetContributorPermission.mockResolvedValue(null);
       renderView();
       expect(await screen.findByText('No tasks submitted yet.')).toBeInTheDocument();
     });
 
-    it('does not call getContributorSubmissions when ownerUID is null', async () => {
+    it('does not call getContributorSubmissions when ownerUID is null and recovery fails', async () => {
       mockGetStoredOwnerUID.mockReturnValue(null);
+      mockGetContributorPermission.mockResolvedValue(null);
       renderView();
       await screen.findByText('No tasks submitted yet.');
       expect(mockGetContributorSubmissions).not.toHaveBeenCalled();
+    });
+
+    it('recovers ownerUID from Firestore when localStorage is empty', async () => {
+      mockGetStoredOwnerUID.mockReturnValue(null);
+      mockGetContributorPermission.mockResolvedValue({
+        ownerUID: 'owner-uid-123',
+        ownerEmail: 'owner@example.com',
+      });
+      mockGetContributorSubmissions.mockResolvedValue([]);
+      renderView();
+      await waitFor(() => {
+        expect(mockStoreOwnerInfo).toHaveBeenCalledWith('owner-uid-123', 'owner@example.com');
+      });
+      await waitFor(() => {
+        expect(mockGetContributorSubmissions).toHaveBeenCalledWith('owner-uid-123', 'contrib-uid-456');
+      });
     });
   });
 
