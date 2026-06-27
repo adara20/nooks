@@ -10,6 +10,8 @@ import {
   type InboxItem,
   submitInboxTask,
   getContributorSubmissions,
+  getContributorPermission,
+  storeOwnerInfo,
   deleteInboxItem,
   getStoredOwnerUID,
   getStoredOwnerEmail,
@@ -250,16 +252,32 @@ interface ContributorHomeViewProps {
 
 export const ContributorHomeView: React.FC<ContributorHomeViewProps> = ({ onNavigateToSettings }) => {
   const { user } = useAuth();
-  const ownerUID = getStoredOwnerUID();
-  const ownerEmail = getStoredOwnerEmail() ?? 'your partner';
+  const [ownerUID, setOwnerUID] = useState<string | null>(getStoredOwnerUID);
+  const [ownerEmail, setOwnerEmail] = useState<string>(getStoredOwnerEmail() ?? 'your partner');
+
+  const userUid = user?.uid;
+
+  // If localStorage was cleared the ownerUID will be null even though the
+  // Firestore permissions doc still exists. Recover silently by re-reading
+  // the doc and repopulating localStorage so the contributor can keep working
+  // without having to re-link their account.
+  useEffect(() => {
+    if (ownerUID || !userUid) return;
+    getContributorPermission(userUid).then(perm => {
+      if (perm) {
+        storeOwnerInfo(perm.ownerUID, perm.ownerEmail);
+        setOwnerUID(perm.ownerUID);
+        setOwnerEmail(perm.ownerEmail);
+      }
+    });
+  }, [ownerUID, userUid]);
 
   const [submissions, setSubmissions] = useState<InboxItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [taskStatuses, setTaskStatuses] = useState<Map<string, string>>(new Map());
   const [dismissed, setDismissed] = useState<Set<string>>(() => getDismissedSubmissionIds());
-
-  const userUid = user?.uid;
 
   // Extracted so it can be called both on mount and on pull-to-refresh
   const fetchSubmissions = useCallback(async () => {
@@ -269,6 +287,7 @@ export const ContributorHomeView: React.FC<ContributorHomeViewProps> = ({ onNavi
       return;
     }
     setLoading(true);
+    setFetchError(null);
     try {
       const items = await getContributorSubmissions(ownerUID, userUid);
       setSubmissions(items);
@@ -287,8 +306,10 @@ export const ContributorHomeView: React.FC<ContributorHomeViewProps> = ({ onNavi
         );
         setTaskStatuses(new Map(pairs.filter(([, v]) => v !== null) as [string, string][]));
       }
-    } catch {
+    } catch (err) {
       setSubmissions([]);
+      const code = (err as { code?: string })?.code ?? 'unknown';
+      setFetchError(`Could not load submissions (${code})`);
     } finally {
       setLoading(false);
     }
@@ -383,6 +404,11 @@ export const ContributorHomeView: React.FC<ContributorHomeViewProps> = ({ onNavi
 
       {/* Submissions list */}
       <div className="px-6 space-y-3">
+        {fetchError && (
+          <div className="p-3 bg-red-50 rounded-xl" data-testid="fetch-error-banner">
+            <p className="text-xs text-red-600 font-medium">{fetchError}</p>
+          </div>
+        )}
         {loading ? (
           <div className="py-20 text-center opacity-40">
             <p className="font-bold animate-pulse">Loading your submissions...</p>
