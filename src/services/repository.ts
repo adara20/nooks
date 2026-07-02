@@ -1,4 +1,4 @@
-import { db, type Bucket, type Task, type TaskStatus } from '../db';
+import { db, type Bucket, type Task, type TaskStatus, type Reminder } from '../db';
 import {
   syncUpsertTask,
   syncDeleteTask,
@@ -65,6 +65,24 @@ class Repository {
   async deleteTask(id: number): Promise<void> {
     await db.tasks.delete(id);
     try { await syncDeleteTask(id); } catch (e) { console.warn("[repository] syncDeleteTask failed:", e); }
+  }
+
+  // ─── Reminders ─────────────────────────────────────────────────────────────
+
+  async getReminders(): Promise<Reminder[]> {
+    return await db.reminders.toArray();
+  }
+
+  async addReminder(reminder: Omit<Reminder, 'id' | 'createdAt'>): Promise<number> {
+    return await db.reminders.add({ ...reminder, createdAt: new Date() });
+  }
+
+  async updateReminder(id: number, updates: Partial<Reminder>): Promise<void> {
+    await db.reminders.update(id, updates);
+  }
+
+  async deleteReminder(id: number): Promise<void> {
+    await db.reminders.delete(id);
   }
 
   // ─── Seed data ─────────────────────────────────────────────────────────────

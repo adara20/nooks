@@ -28,10 +28,21 @@ export interface NotificationSeen {
   eventId: string;
 }
 
+export interface Reminder {
+  id?: number;
+  title: string;
+  intervalDays: number;
+  nextDueDate: Date;
+  active: boolean;
+  createdAt: Date;
+  lastFiredAt?: Date;
+}
+
 export class NooksDatabase extends Dexie {
   buckets!: Table<Bucket>;
   tasks!: Table<Task>;
   notificationsSeen!: Table<NotificationSeen>;
+  reminders!: Table<Reminder>;
 
   constructor() {
     super('NooksDB');
@@ -43,6 +54,12 @@ export class NooksDatabase extends Dexie {
       buckets: '++id, name',
       tasks: '++id, bucketId, status, isUrgent, isImportant, dueDate',
       notificationsSeen: '++id, &eventId',
+    });
+    this.version(3).stores({
+      buckets: '++id, name',
+      tasks: '++id, bucketId, status, isUrgent, isImportant, dueDate',
+      notificationsSeen: '++id, &eventId',
+      reminders: '++id, active, nextDueDate',
     });
   }
 }
