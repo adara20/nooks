@@ -18,7 +18,7 @@ import {
   collection,
   Timestamp,
 } from 'firebase/firestore';
-import { type Task, type Bucket } from '../db';
+import { type Task, type Bucket, type Reminder } from '../db';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -86,6 +86,19 @@ function serialiseBucket(bucket: Bucket): Record<string, unknown> {
   };
 }
 
+/** Serialise a Reminder for Firestore — converts all Date fields to Timestamps. */
+function serialiseReminder(reminder: Reminder): Record<string, unknown> {
+  return {
+    id: reminder.id,
+    title: reminder.title,
+    intervalDays: reminder.intervalDays,
+    nextDueDate: toTimestamp(reminder.nextDueDate),
+    active: reminder.active,
+    createdAt: toTimestamp(reminder.createdAt),
+    lastFiredAt: toTimestamp(reminder.lastFiredAt),
+  };
+}
+
 // ─── Sync helpers ─────────────────────────────────────────────────────────────
 // All functions are no-ops when the user is not signed in.
 // Errors are caught and logged — a Firebase failure must never crash a local write.
@@ -133,6 +146,29 @@ export async function syncDeleteBucket(bucketId: number): Promise<void> {
     await deleteDoc(doc(firestore, `users/${uid}/buckets/${bucketId}`));
   } catch (err) {
     console.warn('[firebaseService] syncDeleteBucket failed:', err);
+  }
+}
+
+export async function syncUpsertReminder(reminder: Reminder): Promise<void> {
+  const uid = auth.currentUser?.uid;
+  if (!uid || reminder.id == null) return;
+  try {
+    await setDoc(
+      doc(firestore, `users/${uid}/reminders/${reminder.id}`),
+      serialiseReminder(reminder)
+    );
+  } catch (err) {
+    console.warn('[firebaseService] syncUpsertReminder failed:', err);
+  }
+}
+
+export async function syncDeleteReminder(reminderId: number): Promise<void> {
+  const uid = auth.currentUser?.uid;
+  if (!uid) return;
+  try {
+    await deleteDoc(doc(firestore, `users/${uid}/reminders/${reminderId}`));
+  } catch (err) {
+    console.warn('[firebaseService] syncDeleteReminder failed:', err);
   }
 }
 

@@ -4,6 +4,8 @@ import {
   syncDeleteTask,
   syncUpsertBucket,
   syncDeleteBucket,
+  syncUpsertReminder,
+  syncDeleteReminder,
 } from './firebaseService';
 
 class Repository {
@@ -74,15 +76,21 @@ class Repository {
   }
 
   async addReminder(reminder: Omit<Reminder, 'id' | 'createdAt'>): Promise<number> {
-    return await db.reminders.add({ ...reminder, createdAt: new Date() });
+    const id = await db.reminders.add({ ...reminder, createdAt: new Date() });
+    const saved = await db.reminders.get(id);
+    if (saved) { try { await syncUpsertReminder(saved); } catch (e) { console.warn("[repository] syncUpsertReminder failed:", e); } }
+    return id;
   }
 
   async updateReminder(id: number, updates: Partial<Reminder>): Promise<void> {
     await db.reminders.update(id, updates);
+    const saved = await db.reminders.get(id);
+    if (saved) { try { await syncUpsertReminder(saved); } catch (e) { console.warn("[repository] syncUpsertReminder failed:", e); } }
   }
 
   async deleteReminder(id: number): Promise<void> {
     await db.reminders.delete(id);
+    try { await syncDeleteReminder(id); } catch (e) { console.warn("[repository] syncDeleteReminder failed:", e); }
   }
 
   // ─── Seed data ─────────────────────────────────────────────────────────────

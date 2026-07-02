@@ -5,13 +5,21 @@ import { db } from '../db';
 // ─── Mock firebaseService ─────────────────────────────────────────────────────
 // Sync calls must never interfere with local DB tests, and must never throw.
 
-const { mockSyncUpsertTask, mockSyncDeleteTask, mockSyncUpsertBucket, mockSyncDeleteBucket } =
-  vi.hoisted(() => ({
-    mockSyncUpsertTask: vi.fn(async () => {}),
-    mockSyncDeleteTask: vi.fn(async () => {}),
-    mockSyncUpsertBucket: vi.fn(async () => {}),
-    mockSyncDeleteBucket: vi.fn(async () => {}),
-  }));
+const {
+  mockSyncUpsertTask,
+  mockSyncDeleteTask,
+  mockSyncUpsertBucket,
+  mockSyncDeleteBucket,
+  mockSyncUpsertReminder,
+  mockSyncDeleteReminder,
+} = vi.hoisted(() => ({
+  mockSyncUpsertTask: vi.fn(async () => {}),
+  mockSyncDeleteTask: vi.fn(async () => {}),
+  mockSyncUpsertBucket: vi.fn(async () => {}),
+  mockSyncDeleteBucket: vi.fn(async () => {}),
+  mockSyncUpsertReminder: vi.fn(async () => {}),
+  mockSyncDeleteReminder: vi.fn(async () => {}),
+}));
 
 vi.mock('./firebaseService', () => ({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -19,6 +27,8 @@ vi.mock('./firebaseService', () => ({
   syncDeleteTask: (id: unknown) => (mockSyncDeleteTask as any)(id),
   syncUpsertBucket: (bucket: unknown) => (mockSyncUpsertBucket as any)(bucket),
   syncDeleteBucket: (id: unknown) => (mockSyncDeleteBucket as any)(id),
+  syncUpsertReminder: (reminder: unknown) => (mockSyncUpsertReminder as any)(reminder),
+  syncDeleteReminder: (id: unknown) => (mockSyncDeleteReminder as any)(id),
 }));
 
 // ─── Setup ────────────────────────────────────────────────────────────────────
@@ -312,6 +322,46 @@ describe('repository: reminders', () => {
     const reminders = await repository.getReminders();
     expect(reminders).toHaveLength(1);
     expect(reminders[0].id).toBe(id1);
+  });
+
+  // ─── Sync call verification ───────────────────────────────────────────────
+
+  it('addReminder calls syncUpsertReminder with the saved reminder', async () => {
+    const id = await repository.addReminder({ title: 'Sync Test', intervalDays: 7, nextDueDate: new Date(), active: true });
+    expect(mockSyncUpsertReminder).toHaveBeenCalledOnce();
+    expect(mockSyncUpsertReminder).toHaveBeenCalledWith(expect.objectContaining({ id, title: 'Sync Test' }));
+  });
+
+  it('updateReminder calls syncUpsertReminder with updated data', async () => {
+    const id = await repository.addReminder({ title: 'Before', intervalDays: 7, nextDueDate: new Date(), active: true });
+    vi.clearAllMocks();
+    await repository.updateReminder(id, { title: 'After' });
+    expect(mockSyncUpsertReminder).toHaveBeenCalledOnce();
+    expect(mockSyncUpsertReminder).toHaveBeenCalledWith(expect.objectContaining({ id, title: 'After' }));
+  });
+
+  it('deleteReminder calls syncDeleteReminder with the reminder id', async () => {
+    const id = await repository.addReminder({ title: 'Gone', intervalDays: 7, nextDueDate: new Date(), active: true });
+    vi.clearAllMocks();
+    await repository.deleteReminder(id);
+    expect(mockSyncDeleteReminder).toHaveBeenCalledOnce();
+    expect(mockSyncDeleteReminder).toHaveBeenCalledWith(id);
+  });
+
+  it('local write still succeeds when syncUpsertReminder rejects', async () => {
+    mockSyncUpsertReminder.mockRejectedValueOnce(new Error('network error'));
+    const id = await repository.addReminder({ title: 'Resilient', intervalDays: 7, nextDueDate: new Date(), active: true });
+    const reminders = await repository.getReminders();
+    expect(reminders).toHaveLength(1);
+    expect(reminders[0].id).toBe(id);
+  });
+
+  it('local write still succeeds when syncDeleteReminder rejects', async () => {
+    const id = await repository.addReminder({ title: 'Delete resilient', intervalDays: 7, nextDueDate: new Date(), active: true });
+    mockSyncDeleteReminder.mockRejectedValueOnce(new Error('network error'));
+    await repository.deleteReminder(id);
+    const reminders = await repository.getReminders();
+    expect(reminders).toHaveLength(0);
   });
 });
 
