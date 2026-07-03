@@ -165,9 +165,9 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialStatusFilter, onCle
           </div>
         </div>
 
-        {/* Bucket Filter */}
+        {/* Status Filter — quadrant/nudge-driven filter, plus Backlog */}
         <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-          {initialStatusFilter && (
+          {initialStatusFilter && initialStatusFilter !== 'backlog' && (
             <button
               onClick={onClearFilter}
               className="px-4 py-2 rounded-full text-sm font-bold bg-nook-ink text-white flex items-center gap-2 whitespace-nowrap"
@@ -176,16 +176,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialStatusFilter, onCle
               <X size={14} />
             </button>
           )}
-          <button
-            onClick={() => setSelectedBucketId(null)}
-            className={cn(
-              "px-4 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-all",
-              selectedBucketId === null && initialStatusFilter !== 'backlog' ? "bg-nook-orange text-white" : "bg-nook-sand text-nook-ink/60"
-            )}
-          >
-            All Buckets
-          </button>
-          
+
           <button
             onClick={() => onFilterChange?.(initialStatusFilter === 'backlog' ? null : 'backlog')}
             className={cn(
@@ -194,6 +185,19 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialStatusFilter, onCle
             )}
           >
             Backlog
+          </button>
+        </div>
+
+        {/* Bucket Filter — independent from status; narrows whichever status filter is active */}
+        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+          <button
+            onClick={() => setSelectedBucketId(null)}
+            className={cn(
+              "px-4 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-all",
+              selectedBucketId === null ? "bg-nook-orange text-white" : "bg-nook-sand text-nook-ink/60"
+            )}
+          >
+            All Buckets
           </button>
 
           {buckets.map(bucket => (
