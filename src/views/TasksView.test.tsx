@@ -170,6 +170,23 @@ describe('TasksView', () => {
       await userEvent.click(screen.getByText('Backlog'));
       expect(mockOnFilterChange).toHaveBeenCalledWith(null);
     });
+
+    it('does not render a duplicate removable chip when Backlog is the active filter', () => {
+      setupLiveQuery();
+      render(<TasksView initialStatusFilter="backlog" onClearFilter={mockOnClearFilter} />);
+      // Only one "Backlog" control should render (the toggle) — not a second
+      // generic status chip duplicating the same state.
+      expect(screen.getAllByText('Backlog')).toHaveLength(1);
+    });
+
+    it('the bucket filter row is independent of the active status filter', () => {
+      const buckets = [createBucket({ id: 1, name: 'Work', emoji: '💼' })];
+      setupLiveQuery([], buckets);
+      render(<TasksView initialStatusFilter="backlog" />);
+      // "All Buckets" and bucket pills still render normally alongside Backlog
+      expect(screen.getByText('All Buckets')).toBeInTheDocument();
+      expect(screen.getByText('Work')).toBeInTheDocument();
+    });
   });
 
   describe('task list filtering', () => {
