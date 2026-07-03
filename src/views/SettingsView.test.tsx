@@ -5,14 +5,28 @@ import { SettingsView } from './SettingsView';
 import * as backupService from '../services/backupService';
 import * as repository from '../services/repository';
 import { db } from '../db';
+import { createReminder } from '../tests/factories';
 
 // ─── Hoisted mock functions ───────────────────────────────────────────────────
 
-const { mockUseAuth, mockSignIn, mockSignUp, mockSignOut } = vi.hoisted(() => ({
+const {
+  mockUseAuth,
+  mockSignIn,
+  mockSignUp,
+  mockSignOut,
+  mockGetReminders,
+  mockAddReminder,
+  mockUpdateReminder,
+  mockDeleteReminder,
+} = vi.hoisted(() => ({
   mockUseAuth: vi.fn(),
   mockSignIn: vi.fn(),
   mockSignUp: vi.fn(),
   mockSignOut: vi.fn(),
+  mockGetReminders: vi.fn(async () => [] as unknown[]),
+  mockAddReminder: vi.fn(async (_r: unknown) => 1),
+  mockUpdateReminder: vi.fn(async (_id: number, _updates: unknown) => {}),
+  mockDeleteReminder: vi.fn(async (_id: number) => {}),
 }));
 
 // ─── Mock AuthContext (overridable per-test via mockUseAuth) ──────────────────
@@ -42,6 +56,10 @@ vi.mock('../services/repository', async (importOriginal) => {
       getAllTasks: vi.fn(async () => []),
       addBucket: vi.fn(async () => 1),
       addTask: vi.fn(async () => 1),
+      getReminders: () => mockGetReminders(),
+      addReminder: (r: unknown) => mockAddReminder(r),
+      updateReminder: (id: number, updates: unknown) => mockUpdateReminder(id, updates),
+      deleteReminder: (id: number) => mockDeleteReminder(id),
     },
   };
 });
@@ -141,6 +159,11 @@ beforeEach(() => {
   mockGenerateInviteCode.mockResolvedValue('ABCD1234');
   mockRedeemInviteCode.mockResolvedValue({ ownerUID: 'owner-uid', ownerEmail: 'owner@example.com' });
   mockGetContributorPermission.mockResolvedValue(null);
+  // Default reminders mocks
+  mockGetReminders.mockResolvedValue([]);
+  mockAddReminder.mockResolvedValue(1);
+  mockUpdateReminder.mockResolvedValue(undefined);
+  mockDeleteReminder.mockResolvedValue(undefined);
 });
 
 
@@ -689,6 +712,134 @@ describe('SettingsView', () => {
       // Resolve and confirm it recovers
       resolve('token');
       await waitFor(() => expect(screen.getByTestId('push-enabled')).toBeInTheDocument());
+    });
+  });
+
+  // ─── RemindersCard ──────────────────────────────────────────────────────────
+
+  describe('RemindersCard', () => {
+    it('renders regardless of sign-in state', async () => {
+      mockUseAuth.mockReturnValue(signedOutAuth);
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(await screen.findByTestId('reminders-card')).toBeInTheDocument();
+    });
+
+    it('shows the empty state when there are no reminders', async () => {
+      mockGetReminders.mockResolvedValue([]);
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(await screen.findByTestId('reminders-empty')).toBeInTheDocument();
+    });
+
+    it('lists existing reminders with interval and next due date', async () => {
+      mockGetReminders.mockResolvedValue([
+        createReminder({ id: 1, title: 'Refill prescription', intervalDays: 35, nextDueDate: new Date(2026, 7, 6), active: true }),
+      ]);
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(await screen.findByTestId('reminder-row-1')).toBeInTheDocument();
+      expect(screen.getByText('Refill prescription')).toBeInTheDocument();
+      expect(screen.getByText(/Every 35 days/)).toBeInTheDocument();
+      expect(screen.getByText(/Aug 6, 2026/)).toBeInTheDocument();
+    });
+
+    it('shows a Paused label for an inactive reminder', async () => {
+      mockGetReminders.mockResolvedValue([
+        createReminder({ id: 2, title: 'Inactive item', active: false }),
+      ]);
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(await screen.findByTestId('reminder-row-2')).toBeInTheDocument();
+      expect(screen.getByText(/Paused/)).toBeInTheDocument();
+    });
+
+    it('the Add Reminder button is disabled until title and a valid interval are entered', async () => {
+      render(<SettingsView onBack={mockOnBack} />);
+      const addButton = await screen.findByTestId('reminder-add-button');
+      expect(addButton).toBeDisabled();
+
+      await userEvent.type(screen.getByTestId('reminder-title-input'), 'Water plants');
+      expect(addButton).toBeDisabled();
+
+      await userEvent.type(screen.getByTestId('reminder-interval-input'), '7');
+      expect(addButton).not.toBeDisabled();
+    });
+
+    it('the Add Reminder button stays disabled for a zero interval', async () => {
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.type(screen.getByTestId('reminder-title-input'), 'Water plants');
+      await userEvent.type(screen.getByTestId('reminder-interval-input'), '0');
+      expect(screen.getByTestId('reminder-add-button')).toBeDisabled();
+    });
+
+    it('creates a reminder and reloads the list', async () => {
+      mockGetReminders.mockResolvedValueOnce([]).mockResolvedValueOnce([
+        createReminder({ id: 3, title: 'Water plants', intervalDays: 7, active: true }),
+      ]);
+      render(<SettingsView onBack={mockOnBack} />);
+
+      await userEvent.type(await screen.findByTestId('reminder-title-input'), 'Water plants');
+      await userEvent.type(screen.getByTestId('reminder-interval-input'), '7');
+      await userEvent.click(screen.getByTestId('reminder-add-button'));
+
+      expect(mockAddReminder).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Water plants', intervalDays: 7, active: true, nextDueDate: expect.any(Date) })
+      );
+      expect(await screen.findByTestId('reminder-row-3')).toBeInTheDocument();
+    });
+
+    it('clears the form after a successful create', async () => {
+      render(<SettingsView onBack={mockOnBack} />);
+      const titleInput = await screen.findByTestId('reminder-title-input') as HTMLInputElement;
+      const intervalInput = screen.getByTestId('reminder-interval-input') as HTMLInputElement;
+
+      await userEvent.type(titleInput, 'Water plants');
+      await userEvent.type(intervalInput, '7');
+      await userEvent.click(screen.getByTestId('reminder-add-button'));
+
+      await waitFor(() => expect(titleInput.value).toBe(''));
+      expect(intervalInput.value).toBe('');
+    });
+
+    it('deletes a reminder', async () => {
+      mockGetReminders.mockResolvedValueOnce([
+        createReminder({ id: 4, title: 'Delete me', active: true }),
+      ]).mockResolvedValueOnce([]);
+      render(<SettingsView onBack={mockOnBack} />);
+
+      const deleteButton = await screen.findByTestId('reminder-delete-4');
+      await userEvent.click(deleteButton);
+
+      expect(mockDeleteReminder).toHaveBeenCalledWith(4);
+      await waitFor(() => expect(screen.queryByTestId('reminder-row-4')).not.toBeInTheDocument());
+    });
+
+    it('pauses an active reminder', async () => {
+      mockGetReminders.mockResolvedValue([
+        createReminder({ id: 5, title: 'Pause me', active: true }),
+      ]);
+      render(<SettingsView onBack={mockOnBack} />);
+
+      const toggleButton = await screen.findByTestId('reminder-toggle-5');
+      expect(toggleButton).toHaveAttribute('aria-label', 'Pause reminder');
+      await userEvent.click(toggleButton);
+
+      expect(mockUpdateReminder).toHaveBeenCalledWith(5, { active: false });
+    });
+
+    it('resumes a paused reminder', async () => {
+      mockGetReminders.mockResolvedValue([
+        createReminder({ id: 6, title: 'Resume me', active: false }),
+      ]);
+      render(<SettingsView onBack={mockOnBack} />);
+
+      const toggleButton = await screen.findByTestId('reminder-toggle-6');
+      expect(toggleButton).toHaveAttribute('aria-label', 'Resume reminder');
+      await userEvent.click(toggleButton);
+
+      expect(mockUpdateReminder).toHaveBeenCalledWith(6, { active: true });
+    });
+
+    it('shows a note that background delivery requires sign-in', async () => {
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(await screen.findByText(/requires sign-in/i)).toBeInTheDocument();
     });
   });
 });

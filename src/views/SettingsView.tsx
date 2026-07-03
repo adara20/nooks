@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { formatDistanceToNow, addDays, format } from 'date-fns';
-import { Download, Upload, ArrowLeft, AlertCircle, Cloud, CloudOff, LogIn, UserPlus, LogOut, CheckCircle2, Loader2, Copy, Users, Bell, BellOff } from 'lucide-react';
+import { Download, Upload, ArrowLeft, AlertCircle, Cloud, CloudOff, LogIn, UserPlus, LogOut, CheckCircle2, Loader2, Copy, Users, Bell, BellOff, Repeat, Pause, Play, Trash2 } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { Modal } from '../components/Modal';
 import { repository } from '../services/repository';
-import { db } from '../db';
+import { db, type Reminder } from '../db';
+import { computeNextDueDate } from '../services/reminderService';
 import {
   exportData,
   triggerDownload,
@@ -355,6 +356,131 @@ const PushNotificationsCard: React.FC = () => {
   );
 };
 
+// ─── Reminders Card ───────────────────────────────────────────────────────────
+
+const RemindersCard: React.FC = () => {
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [title, setTitle] = useState('');
+  const [intervalDays, setIntervalDays] = useState('');
+
+  const loadReminders = async () => {
+    setReminders(await repository.getReminders());
+  };
+
+  useEffect(() => {
+    loadReminders();
+  }, []);
+
+  const handleCreate = async () => {
+    const days = Number(intervalDays);
+    if (!title.trim() || !Number.isInteger(days) || days <= 0) return;
+    await repository.addReminder({
+      title: title.trim(),
+      intervalDays: days,
+      nextDueDate: computeNextDueDate(new Date(), days),
+      active: true,
+    });
+    setTitle('');
+    setIntervalDays('');
+    await loadReminders();
+  };
+
+  const handleDelete = async (id: number) => {
+    await repository.deleteReminder(id);
+    await loadReminders();
+  };
+
+  const handleToggleActive = async (reminder: Reminder) => {
+    await repository.updateReminder(reminder.id!, { active: !reminder.active });
+    await loadReminders();
+  };
+
+  return (
+    <Card className="space-y-4" data-testid="reminders-card">
+      <div className="flex items-center gap-2">
+        <Repeat size={18} className="text-nook-ink/60" />
+        <span className="text-sm font-bold text-nook-ink">Reminders</span>
+      </div>
+
+      <p className="text-xs text-nook-ink/50">
+        Recurring reminders for things outside your task list, like a prescription refill every few weeks. Background delivery requires sign-in.
+      </p>
+
+      {reminders.length === 0 ? (
+        <p className="text-xs text-nook-ink/40" data-testid="reminders-empty">No reminders yet.</p>
+      ) : (
+        <div className="space-y-2">
+          {reminders.map(reminder => (
+            <div
+              key={reminder.id}
+              className={cn(
+                'flex items-center justify-between p-3 rounded-xl',
+                reminder.active ? 'bg-nook-sand/30' : 'bg-nook-ink/5 opacity-50'
+              )}
+              data-testid={`reminder-row-${reminder.id}`}
+            >
+              <div>
+                <p className="text-sm font-bold text-nook-ink">{reminder.title}</p>
+                <p className="text-[11px] text-nook-ink/40">
+                  Every {reminder.intervalDays} day{reminder.intervalDays !== 1 ? 's' : ''} · Next {format(reminder.nextDueDate, 'MMM d, yyyy')}
+                  {!reminder.active && ' · Paused'}
+                </p>
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => handleToggleActive(reminder)}
+                  aria-label={reminder.active ? 'Pause reminder' : 'Resume reminder'}
+                  className="p-1.5 text-nook-ink/40 hover:text-nook-ink transition-colors"
+                  data-testid={`reminder-toggle-${reminder.id}`}
+                >
+                  {reminder.active ? <Pause size={16} /> : <Play size={16} />}
+                </button>
+                <button
+                  onClick={() => handleDelete(reminder.id!)}
+                  aria-label="Delete reminder"
+                  className="p-1.5 text-nook-ink/40 hover:text-red-500 transition-colors"
+                  data-testid={`reminder-delete-${reminder.id}`}
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="space-y-2">
+        <input
+          type="text"
+          placeholder="Reminder title"
+          value={title}
+          onChange={e => setTitle(e.target.value)}
+          className="w-full px-4 py-2.5 rounded-xl border border-nook-ink/10 bg-white text-sm text-nook-ink placeholder-nook-ink/30 focus:outline-none focus:ring-2 focus:ring-nook-ink/20"
+          data-testid="reminder-title-input"
+        />
+        <input
+          type="number"
+          min="1"
+          placeholder="Repeat every N days"
+          value={intervalDays}
+          onChange={e => setIntervalDays(e.target.value)}
+          className="w-full px-4 py-2.5 rounded-xl border border-nook-ink/10 bg-white text-sm text-nook-ink placeholder-nook-ink/30 focus:outline-none focus:ring-2 focus:ring-nook-ink/20"
+          data-testid="reminder-interval-input"
+        />
+        <Button
+          variant="secondary"
+          className="w-full py-3 text-sm"
+          onClick={handleCreate}
+          disabled={!title.trim() || !Number.isInteger(Number(intervalDays)) || Number(intervalDays) <= 0}
+          data-testid="reminder-add-button"
+        >
+          Add Reminder
+        </Button>
+      </div>
+    </Card>
+  );
+};
+
 // ─── Cloud Backup Card ────────────────────────────────────────────────────────
 
 const CloudBackupCard: React.FC = () => {
@@ -681,6 +807,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onBack, onModeChange
       <section className="space-y-4">
         <h2 className="text-xs font-bold uppercase tracking-widest text-nook-ink/40 px-1">Cloud Backup</h2>
         <CloudBackupCard />
+      </section>
+
+      {/* Reminders section — available regardless of sign-in state */}
+      <section className="space-y-4">
+        <h2 className="text-xs font-bold uppercase tracking-widest text-nook-ink/40 px-1">Reminders</h2>
+        <RemindersCard />
       </section>
 
       {/* Push Notifications section — only when signed in */}
