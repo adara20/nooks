@@ -429,7 +429,14 @@ describe('firebaseService — sync helpers', () => {
     // ─── runInitialSync ────────────────────────────────────────────────────────
 
     describe('runInitialSync', () => {
-      const makeCallbacks = (overrides: Partial<Parameters<typeof runInitialSync>[1]> = {}) => ({
+      // `overrides` values must stay Mock-typed (not the plain interface function
+      // type from Parameters<typeof runInitialSync>[1]) so callers can still
+      // access `.mock` on the returned callbacks after overriding one of them.
+      const makeCallbacks = (overrides: Partial<{
+        getLocalData: ReturnType<typeof vi.fn>;
+        insertMergedItems: ReturnType<typeof vi.fn>;
+        getAllLocalData: ReturnType<typeof vi.fn>;
+      }> = {}) => ({
         getLocalData: vi.fn(async () => ({ buckets: [] as Bucket[], tasks: [] as Task[] })),
         insertMergedItems: vi.fn(async () => {}),
         getAllLocalData: vi.fn(async () => ({ buckets: [] as Bucket[], tasks: [] as Task[] })),

@@ -915,6 +915,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onBack, onModeChange
         </p>
       </section>
 
+      {/* Build version — lets you confirm which deploy you're running */}
+      <p className="text-[10px] text-nook-ink/30 text-center" data-testid="build-version">
+        v{__APP_VERSION__} · {__BUILD_SHA__} · built {format(new Date(__BUILD_TIME__), 'MMM d, HH:mm')}
+      </p>
+
       {/* Import choice modal */}
       <Modal
         isOpen={isImportModalOpen}

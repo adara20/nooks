@@ -178,6 +178,12 @@ describe('SettingsView', () => {
     expect(screen.getByText('Settings')).toBeInTheDocument();
   });
 
+  it('renders the build version footer with the app version and build SHA', () => {
+    render(<SettingsView onBack={mockOnBack} />);
+    expect(screen.getByTestId('build-version')).toHaveTextContent(`v${__APP_VERSION__}`);
+    expect(screen.getByTestId('build-version')).toHaveTextContent(__BUILD_SHA__);
+  });
+
   it('renders "No backup yet" when getLastExportDate returns null', () => {
     vi.mocked(backupService.getLastExportDate).mockReturnValue(null);
     render(<SettingsView onBack={mockOnBack} />);
