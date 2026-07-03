@@ -41,10 +41,28 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // Invite codes: any authenticated user can create or read; owner can update (mark redeemed)
+    // Invite codes.
+    // - create: only the owner may mint an invite, and only for their own UID.
+    // - get: any authenticated user may read a SINGLE invite *if they know the
+    //   exact code* (the doc ID). `list` is intentionally NOT granted, so the
+    //   collection cannot be enumerated — this prevents harvesting every user's
+    //   ownerEmail/ownerUID and every outstanding code.
+    // - update: the owner may edit their own invite; a contributor may redeem an
+    //   un-redeemed invite by stamping redeemedBy with their own UID (and may not
+    //   alter ownerUID in the process).
     match /invites/{code} {
-      allow create: if request.auth != null;
-      allow read, update: if request.auth != null;
+      allow create: if request.auth != null
+                    && request.resource.data.ownerUID == request.auth.uid;
+      allow get: if request.auth != null;
+      allow update: if request.auth != null
+                    && (
+                      resource.data.ownerUID == request.auth.uid
+                      || (
+                        resource.data.get('redeemedBy', null) == null
+                        && request.resource.data.redeemedBy == request.auth.uid
+                        && request.resource.data.ownerUID == resource.data.ownerUID
+                      )
+                    );
     }
   }
 }

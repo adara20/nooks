@@ -58,7 +58,9 @@ export default defineConfig({
     // package (compiled to CommonJS) — exclude it so a local `npm run build`
     // in functions/ doesn't leave behind .test.js files that collide with
     // the real functions/src tests when running the suite from the root.
-    exclude: [...configDefaults.exclude, 'functions/lib/**'],
+    // firestore-tests/** run against the Firestore emulator via a separate
+    // config (`npm run test:rules`) — keep them out of the jsdom app suite.
+    exclude: [...configDefaults.exclude, 'functions/lib/**', 'firestore-tests/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],
