@@ -4,7 +4,7 @@ import { repository } from '../services/repository';
 import { generateNudges } from '../services/nudgeService';
 import { getLastExportDate } from '../services/backupService';
 import { useAuth } from '../context/AuthContext';
-import { getPendingInboxCount, getAppMode } from '../services/contributorService';
+import { getPendingInboxCount, getAppMode, fetchPendingInboxItems } from '../services/contributorService';
 import { Card } from '../components/Card';
 import { PullToRefreshIndicator } from '../components/PullToRefreshIndicator';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
@@ -110,13 +110,21 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigateToTasks, onNavigat
                 <p className="text-lg font-medium leading-tight text-nook-ink flex-1">{nudge.message}</p>
                 {nudge.id === 'inbox-pending' && (
                   <button
-                    onClick={(e) => {
+                    onClick={async (e) => {
                       e.stopPropagation();
-                      resendNotification(`📥 ${pendingInboxCount} submission${pendingInboxCount !== 1 ? 's' : ''} waiting`, {
-                        body: 'Tap to review your inbox.',
-                        icon: '/icons/icon-192x192.png',
-                        data: { type: 'inbox' },
-                      });
+                      if (!user) return;
+                      try {
+                        const items = await fetchPendingInboxItems(user.uid);
+                        for (const item of items) {
+                          await resendNotification(`📥 ${item.contributorEmail} submitted a task`, {
+                            body: item.title,
+                            icon: '/icons/icon-192x192.png',
+                            data: { type: 'inbox' },
+                          });
+                        }
+                      } catch {
+                        // best-effort — resend failures shouldn't surface to the user
+                      }
                     }}
                     aria-label="Resend notification"
                     className="mt-1 text-nook-ink/40 hover:text-nook-orange transition-colors shrink-0"

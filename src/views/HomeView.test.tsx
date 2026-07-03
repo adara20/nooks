@@ -29,9 +29,11 @@ vi.mock('../hooks/usePullToRefresh', () => ({
   usePullToRefresh: vi.fn(() => ({ pullDistance: 0, isRefreshing: false })),
 }));
 
+const mockFetchPendingInboxItems = vi.fn(async (_uid: string) => [] as { id: string; title: string; contributorEmail: string }[]);
 vi.mock('../services/contributorService', () => ({
   getPendingInboxCount: vi.fn(async () => 0),
   getAppMode: vi.fn(() => 'owner'),
+  fetchPendingInboxItems: (uid: string) => mockFetchPendingInboxItems(uid),
 }));
 
 vi.mock('../services/repository', () => ({
@@ -312,14 +314,40 @@ describe('HomeView', () => {
       expect(screen.queryByTestId('resend-inbox-notification')).not.toBeInTheDocument();
     });
 
-    it('clicking resend calls resendNotification without navigating to tasks', async () => {
+    it('clicking resend fetches pending items and resends one notification per item, without navigating to tasks', async () => {
+      mockUseAuth.mockReturnValue({ isSignedIn: true, user: { uid: 'owner-uid' } });
+      mockGenerateNudges.mockReturnValue([
+        { id: 'inbox-pending', message: '💌 2 tasks from your partner are waiting for your review.', type: 'gentle' },
+      ]);
+      mockFetchPendingInboxItems.mockResolvedValue([
+        { id: 'inbox-1', title: 'Buy milk', contributorEmail: 'partner@test.com' },
+        { id: 'inbox-2', title: 'Walk the dog', contributorEmail: 'partner@test.com' },
+      ]);
+      renderHomeView([]);
+      await userEvent.click(screen.getByTestId('resend-inbox-notification'));
+
+      expect(mockFetchPendingInboxItems).toHaveBeenCalledWith('owner-uid');
+      expect(mockResendNotification).toHaveBeenCalledTimes(2);
+      expect(mockResendNotification).toHaveBeenCalledWith(
+        '📥 partner@test.com submitted a task',
+        expect.objectContaining({ body: 'Buy milk' })
+      );
+      expect(mockResendNotification).toHaveBeenCalledWith(
+        '📥 partner@test.com submitted a task',
+        expect.objectContaining({ body: 'Walk the dog' })
+      );
+      expect(mockOnNavigateToTasks).not.toHaveBeenCalled();
+    });
+
+    it('clicking resend is a no-op when not signed in', async () => {
+      mockUseAuth.mockReturnValue({ isSignedIn: false, user: null });
       mockGenerateNudges.mockReturnValue([
         { id: 'inbox-pending', message: '💌 2 tasks from your partner are waiting for your review.', type: 'gentle' },
       ]);
       renderHomeView([]);
       await userEvent.click(screen.getByTestId('resend-inbox-notification'));
-      expect(mockResendNotification).toHaveBeenCalledOnce();
-      expect(mockOnNavigateToTasks).not.toHaveBeenCalled();
+      expect(mockFetchPendingInboxItems).not.toHaveBeenCalled();
+      expect(mockResendNotification).not.toHaveBeenCalled();
     });
   });
 
