@@ -50,14 +50,18 @@ onBackgroundMessage(messaging, (payload) => {
 
 // ─── Tap-to-navigate ──────────────────────────────────────────────────────────
 // When the user taps a push notification, focus an existing app window or open
-// a new one. The `?open=inbox` query param tells App.tsx to navigate to the
-// home view (where the inbox nudge is visible).
+// a new one. Inbox pushes carry `?open=inbox` so App.tsx navigates to the home
+// view (where the inbox nudge is visible); reminder pushes just open the app
+// at its base URL (Home is already the default landing view).
 
 self.addEventListener('notificationclick', (event: NotificationEvent) => {
   event.notification.close();
 
+  const notificationType = event.notification.data?.type;
+  const isInbox = notificationType === 'inbox';
+
   const urlToOpen = new URL(self.registration.scope);
-  urlToOpen.searchParams.set('open', 'inbox');
+  if (isInbox) urlToOpen.searchParams.set('open', 'inbox');
 
   event.waitUntil(
     self.clients
@@ -67,7 +71,11 @@ self.addEventListener('notificationclick', (event: NotificationEvent) => {
         for (const client of clientList) {
           if ('focus' in client) {
             const clientUrl = new URL(client.url);
-            clientUrl.searchParams.set('open', 'inbox');
+            if (isInbox) {
+              clientUrl.searchParams.set('open', 'inbox');
+            } else {
+              clientUrl.searchParams.delete('open');
+            }
             return (client as WindowClient).navigate(clientUrl.toString())
               .then((c) => c?.focus());
           }
