@@ -9,3 +9,6 @@ coverage/
 tasks/
 functions/lib/
 functions/node_modules/
+
+# Source snapshots / archives — never commit these (they can smuggle in a real .env)
+*.zip
