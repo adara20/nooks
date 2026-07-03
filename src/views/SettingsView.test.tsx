@@ -101,6 +101,11 @@ const mockGetContributorPermission = vi.fn<any>(async () => null);
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockRemoveContributorPermission = vi.fn<any>(async () => {});
 
+const mockResendNotification = vi.fn(async (_title: string, _options?: unknown) => {});
+vi.mock('../services/notificationRestoreService', () => ({
+  resendNotification: (title: string, options?: unknown) => mockResendNotification(title, options),
+}));
+
 vi.mock('../services/contributorService', () => ({
   getAppMode: () => mockGetAppMode(),
   setAppMode: (mode: string) => mockSetAppMode(mode),
@@ -840,6 +845,44 @@ describe('SettingsView', () => {
     it('shows a note that background delivery requires sign-in', async () => {
       render(<SettingsView onBack={mockOnBack} />);
       expect(await screen.findByText(/requires sign-in/i)).toBeInTheDocument();
+    });
+
+    it('shows a resend button for a due reminder', async () => {
+      mockGetReminders.mockResolvedValue([
+        createReminder({ id: 7, title: 'Overdue reminder', active: true, nextDueDate: new Date('2000-01-01') }),
+      ]);
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(await screen.findByTestId('reminder-resend-7')).toBeInTheDocument();
+    });
+
+    it('does not show a resend button for a reminder that is not yet due', async () => {
+      mockGetReminders.mockResolvedValue([
+        createReminder({ id: 8, title: 'Future reminder', active: true, nextDueDate: new Date('2099-01-01') }),
+      ]);
+      render(<SettingsView onBack={mockOnBack} />);
+      await screen.findByTestId('reminder-row-8');
+      expect(screen.queryByTestId('reminder-resend-8')).not.toBeInTheDocument();
+    });
+
+    it('does not show a resend button for a paused reminder even if overdue', async () => {
+      mockGetReminders.mockResolvedValue([
+        createReminder({ id: 9, title: 'Paused overdue', active: false, nextDueDate: new Date('2000-01-01') }),
+      ]);
+      render(<SettingsView onBack={mockOnBack} />);
+      await screen.findByTestId('reminder-row-9');
+      expect(screen.queryByTestId('reminder-resend-9')).not.toBeInTheDocument();
+    });
+
+    it('clicking resend calls resendNotification with the reminder title', async () => {
+      mockGetReminders.mockResolvedValue([
+        createReminder({ id: 10, title: 'Refill prescription', active: true, nextDueDate: new Date('2000-01-01') }),
+      ]);
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.click(await screen.findByTestId('reminder-resend-10'));
+      expect(mockResendNotification).toHaveBeenCalledWith(
+        '⏰ Refill prescription',
+        expect.objectContaining({ body: 'This reminder is due today.' })
+      );
     });
   });
 });

@@ -9,8 +9,9 @@ import { Card } from '../components/Card';
 import { PullToRefreshIndicator } from '../components/PullToRefreshIndicator';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { motion } from 'motion/react';
-import { Sparkles, Flame, Info, CheckCircle2, Settings } from 'lucide-react';
+import { Sparkles, Flame, Info, CheckCircle2, Settings, BellRing } from 'lucide-react';
 import { cn } from '../utils/cn';
+import { resendNotification } from '../services/notificationRestoreService';
 
 interface HomeViewProps {
   onNavigateToTasks: (status: string | null) => void;
@@ -106,7 +107,24 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigateToTasks, onNavigat
                 className={cn("flex items-start gap-4 border-2", getNudgeStyles(nudge.type))}
               >
                 <div className="mt-1">{getNudgeIcon(nudge.type)}</div>
-                <p className="text-lg font-medium leading-tight text-nook-ink">{nudge.message}</p>
+                <p className="text-lg font-medium leading-tight text-nook-ink flex-1">{nudge.message}</p>
+                {nudge.id === 'inbox-pending' && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      resendNotification(`📥 ${pendingInboxCount} submission${pendingInboxCount !== 1 ? 's' : ''} waiting`, {
+                        body: 'Tap to review your inbox.',
+                        icon: '/icons/icon-192x192.png',
+                        data: { type: 'inbox' },
+                      });
+                    }}
+                    aria-label="Resend notification"
+                    className="mt-1 text-nook-ink/40 hover:text-nook-orange transition-colors shrink-0"
+                    data-testid="resend-inbox-notification"
+                  >
+                    <BellRing size={20} />
+                  </button>
+                )}
               </Card>
             </motion.div>
           ))}

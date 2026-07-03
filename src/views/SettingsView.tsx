@@ -1,12 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { formatDistanceToNow, addDays, format } from 'date-fns';
-import { Download, Upload, ArrowLeft, AlertCircle, Cloud, CloudOff, LogIn, UserPlus, LogOut, CheckCircle2, Loader2, Copy, Users, Bell, BellOff, Repeat, Pause, Play, Trash2 } from 'lucide-react';
+import { Download, Upload, ArrowLeft, AlertCircle, Cloud, CloudOff, LogIn, UserPlus, LogOut, CheckCircle2, Loader2, Copy, Users, Bell, BellOff, BellRing, Repeat, Pause, Play, Trash2 } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { Modal } from '../components/Modal';
 import { repository } from '../services/repository';
 import { db, type Reminder } from '../db';
-import { computeNextDueDate } from '../services/reminderService';
+import { computeNextDueDate, isDue } from '../services/reminderService';
+import { resendNotification } from '../services/notificationRestoreService';
 import {
   exportData,
   triggerDownload,
@@ -427,6 +428,20 @@ const RemindersCard: React.FC = () => {
                 </p>
               </div>
               <div className="flex items-center gap-1">
+                {isDue(reminder) && (
+                  <button
+                    onClick={() => resendNotification(`⏰ ${reminder.title}`, {
+                      body: 'This reminder is due today.',
+                      icon: '/icons/icon-192x192.png',
+                      data: { type: 'reminder' },
+                    })}
+                    aria-label="Resend notification"
+                    className="p-1.5 text-nook-ink/40 hover:text-nook-orange transition-colors"
+                    data-testid={`reminder-resend-${reminder.id}`}
+                  >
+                    <BellRing size={16} />
+                  </button>
+                )}
                 <button
                   onClick={() => handleToggleActive(reminder)}
                   aria-label={reminder.active ? 'Pause reminder' : 'Resume reminder'}
