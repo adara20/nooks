@@ -174,7 +174,6 @@ const SubmitForm: React.FC<SubmitFormProps> = ({ ownerEmail, onSubmit, onClose }
     <form onSubmit={handleSubmit} className="space-y-6">
       <div className="space-y-4">
         <input
-          autoFocus
           type="text"
           placeholder="What needs doing?"
           className="w-full bg-transparent text-2xl font-bold placeholder:text-nook-ink/20 focus:outline-none"

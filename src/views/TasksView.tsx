@@ -488,7 +488,6 @@ const TaskForm: React.FC<{
     <form onSubmit={handleSubmit} className="space-y-6">
       <div className="space-y-4">
         <input
-          autoFocus
           type="text"
           placeholder="What needs doing?"
           className="w-full bg-transparent text-2xl font-bold placeholder:text-nook-ink/20 focus:outline-none"
@@ -658,7 +657,6 @@ const BucketManager: React.FC<{ buckets: Bucket[] }> = ({ buckets }) => {
             </div>
           </div>
           <input
-            autoFocus
             type="text"
             placeholder="Bucket name"
             className="w-full bg-white rounded-xl p-3 font-bold focus:outline-none"
