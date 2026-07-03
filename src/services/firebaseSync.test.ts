@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Task, Bucket } from '../db';
+import type { Task, Bucket, Reminder } from '../db';
 
 // ─── Hoisted mocks ────────────────────────────────────────────────────────────
 
@@ -66,6 +66,8 @@ import {
   syncDeleteTask,
   syncUpsertBucket,
   syncDeleteBucket,
+  syncUpsertReminder,
+  syncDeleteReminder,
   fetchCloudData,
   pushAllToCloud,
   runInitialSync,
@@ -87,6 +89,15 @@ const baseBucket: Bucket = {
   id: 2,
   name: 'Test Bucket',
   emoji: '📁',
+  createdAt: new Date('2024-01-01'),
+};
+
+const baseReminder: Reminder = {
+  id: 3,
+  title: 'Refill prescription',
+  intervalDays: 35,
+  nextDueDate: new Date('2026-08-06'),
+  active: true,
   createdAt: new Date('2024-01-01'),
 };
 
@@ -130,6 +141,16 @@ describe('firebaseService — sync helpers', () => {
 
     it('syncDeleteBucket is a no-op', async () => {
       await syncDeleteBucket(2);
+      expect(mockDeleteDoc).not.toHaveBeenCalled();
+    });
+
+    it('syncUpsertReminder is a no-op', async () => {
+      await syncUpsertReminder(baseReminder);
+      expect(mockSetDoc).not.toHaveBeenCalled();
+    });
+
+    it('syncDeleteReminder is a no-op', async () => {
+      await syncDeleteReminder(3);
       expect(mockDeleteDoc).not.toHaveBeenCalled();
     });
   });
@@ -233,6 +254,59 @@ describe('firebaseService — sync helpers', () => {
       it('swallows errors — does not throw', async () => {
         mockDeleteDoc.mockRejectedValueOnce(new Error('network'));
         await expect(syncDeleteBucket(2)).resolves.toBeUndefined();
+      });
+    });
+
+    describe('syncUpsertReminder', () => {
+      it('writes to the correct Firestore path', async () => {
+        await syncUpsertReminder(baseReminder);
+        expect(mockDoc).toHaveBeenCalledWith('users/uid-abc/reminders/3');
+        expect(mockSetDoc).toHaveBeenCalledOnce();
+      });
+
+      it('serialises reminder fields correctly', async () => {
+        await syncUpsertReminder(baseReminder);
+        const data = mockSetDoc.mock.lastCall?.[0] as Record<string, unknown>;
+        expect(data.title).toBe('Refill prescription');
+        expect(data.intervalDays).toBe(35);
+        expect(data.active).toBe(true);
+        expect((data.nextDueDate as { _type: string })._type).toBe('Timestamp');
+        expect((data.createdAt as { _type: string })._type).toBe('Timestamp');
+      });
+
+      it('serialises null for an unset lastFiredAt', async () => {
+        await syncUpsertReminder(baseReminder);
+        const data = mockSetDoc.mock.lastCall?.[0] as Record<string, unknown>;
+        expect(data.lastFiredAt).toBeNull();
+      });
+
+      it('serialises lastFiredAt when set', async () => {
+        await syncUpsertReminder({ ...baseReminder, lastFiredAt: new Date('2026-07-01') });
+        const data = mockSetDoc.mock.lastCall?.[0] as Record<string, unknown>;
+        expect((data.lastFiredAt as { _type: string })._type).toBe('Timestamp');
+      });
+
+      it('is a no-op when reminder has no id', async () => {
+        await syncUpsertReminder({ ...baseReminder, id: undefined });
+        expect(mockSetDoc).not.toHaveBeenCalled();
+      });
+
+      it('swallows errors — does not throw', async () => {
+        mockSetDoc.mockRejectedValueOnce(new Error('network'));
+        await expect(syncUpsertReminder(baseReminder)).resolves.toBeUndefined();
+      });
+    });
+
+    describe('syncDeleteReminder', () => {
+      it('deletes the correct Firestore path', async () => {
+        await syncDeleteReminder(9);
+        expect(mockDoc).toHaveBeenCalledWith('users/uid-abc/reminders/9');
+        expect(mockDeleteDoc).toHaveBeenCalledWith('users/uid-abc/reminders/9');
+      });
+
+      it('swallows errors — does not throw', async () => {
+        mockDeleteDoc.mockRejectedValueOnce(new Error('network'));
+        await expect(syncDeleteReminder(3)).resolves.toBeUndefined();
       });
     });
 

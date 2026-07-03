@@ -1,18 +1,16 @@
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-import { getMessaging } from 'firebase-admin/messaging';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
+import { sendPushToUser } from './notificationHelpers';
 
 initializeApp();
 
 // ─── onInboxCreated ───────────────────────────────────────────────────────────
 //
 // Fires when a contributor writes a new doc to users/{ownerUID}/inbox/{inboxId}.
-// Looks up all FCM tokens registered under the owner's account and sends a
-// data-only multicast push. The SW onBackgroundMessage handler calls
-// showNotification() to control display, preventing double-notifications.
-// When the app is in the foreground, Firebase delivers only to onMessage and
-// the Sonner toast from NotificationProvider handles display instead.
+// Sends a data-only multicast push to the owner's registered FCM tokens via
+// the shared sendPushToUser helper.
 //
 // Path:  users/{ownerUID}/inbox/{inboxId}
 
@@ -27,49 +25,57 @@ export const onInboxCreated = onDocumentCreated(
     const title = String(data.title ?? 'New task submitted');
     const contributorEmail = String(data.contributorEmail ?? 'Someone');
 
-    // Fetch all FCM tokens registered for this owner
+    await sendPushToUser(ownerUID, {
+      type: 'inbox',
+      title: `📥 ${contributorEmail} submitted a task`,
+      body: title,
+    });
+  }
+);
+
+// ─── onReminderDue ────────────────────────────────────────────────────────────
+//
+// Runs daily at 8:00 AM America/New_York. Checks every user's reminders
+// (users/{ownerUID}/reminders/{reminderId}) for ones that are active and due,
+// sends a data-only push per due reminder via the shared helper, then
+// advances nextDueDate by the reminder's intervalDays.
+//
+// Path:  users/{ownerUID}/reminders/{reminderId}
+
+export const onReminderDue = onSchedule(
+  { schedule: 'every day 08:00', timeZone: 'America/New_York' },
+  async () => {
     const db = getFirestore();
-    const tokensSnap = await db
-      .collection(`users/${ownerUID}/fcmTokens`)
+    const now = new Date();
+
+    const dueSnap = await db
+      .collectionGroup('reminders')
+      .where('active', '==', true)
+      .where('nextDueDate', '<=', now)
       .get();
 
-    if (tokensSnap.empty) return;
+    for (const reminderDoc of dueSnap.docs) {
+      const ownerUID = reminderDoc.ref.parent.parent?.id;
+      if (!ownerUID) continue;
 
-    const tokens = tokensSnap.docs.map((d) => d.id);
+      const data = reminderDoc.data();
+      const title = String(data.title ?? 'Reminder');
+      const intervalDays = Number(data.intervalDays ?? 0);
+      const currentDueDate = (data.nextDueDate as FirebaseFirestore.Timestamp).toDate();
 
-    const notificationTitle = `📥 ${contributorEmail} submitted a task`;
+      await sendPushToUser(ownerUID, {
+        type: 'reminder',
+        title: `⏰ ${title}`,
+        body: 'This reminder is due today.',
+      });
 
-    // Data-only push: the SW onBackgroundMessage handler calls showNotification()
-    // so we control display on all platforms. No notification field — avoids a
-    // double-notification where both the FCM payload and the SW handler show one.
-    const messaging = getMessaging();
-    const response = await messaging.sendEachForMulticast({
-      tokens,
-      data: {
-        title: notificationTitle,
-        body: title,
-        icon: '/icons/icon-192x192.png',
-      },
-    });
+      const nextDueDate = new Date(currentDueDate);
+      nextDueDate.setDate(nextDueDate.getDate() + intervalDays);
 
-    // Prune any tokens that are no longer valid
-    const staleTokens: Promise<FirebaseFirestore.WriteResult>[] = [];
-    response.responses.forEach((res, idx) => {
-      if (!res.success) {
-        const errorCode = res.error?.code ?? '';
-        if (
-          errorCode === 'messaging/registration-token-not-registered' ||
-          errorCode === 'messaging/invalid-registration-token'
-        ) {
-          staleTokens.push(
-            db.doc(`users/${ownerUID}/fcmTokens/${tokens[idx]}`).delete()
-          );
-        }
-      }
-    });
-
-    if (staleTokens.length > 0) {
-      await Promise.all(staleTokens);
+      await reminderDoc.ref.update({
+        nextDueDate,
+        lastFiredAt: now,
+      });
     }
   }
 );

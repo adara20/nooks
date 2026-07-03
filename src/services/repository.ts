@@ -1,9 +1,11 @@
-import { db, type Bucket, type Task, type TaskStatus } from '../db';
+import { db, type Bucket, type Task, type TaskStatus, type Reminder } from '../db';
 import {
   syncUpsertTask,
   syncDeleteTask,
   syncUpsertBucket,
   syncDeleteBucket,
+  syncUpsertReminder,
+  syncDeleteReminder,
 } from './firebaseService';
 
 class Repository {
@@ -65,6 +67,30 @@ class Repository {
   async deleteTask(id: number): Promise<void> {
     await db.tasks.delete(id);
     try { await syncDeleteTask(id); } catch (e) { console.warn("[repository] syncDeleteTask failed:", e); }
+  }
+
+  // ─── Reminders ─────────────────────────────────────────────────────────────
+
+  async getReminders(): Promise<Reminder[]> {
+    return await db.reminders.toArray();
+  }
+
+  async addReminder(reminder: Omit<Reminder, 'id' | 'createdAt'>): Promise<number> {
+    const id = await db.reminders.add({ ...reminder, createdAt: new Date() });
+    const saved = await db.reminders.get(id);
+    if (saved) { try { await syncUpsertReminder(saved); } catch (e) { console.warn("[repository] syncUpsertReminder failed:", e); } }
+    return id;
+  }
+
+  async updateReminder(id: number, updates: Partial<Reminder>): Promise<void> {
+    await db.reminders.update(id, updates);
+    const saved = await db.reminders.get(id);
+    if (saved) { try { await syncUpsertReminder(saved); } catch (e) { console.warn("[repository] syncUpsertReminder failed:", e); } }
+  }
+
+  async deleteReminder(id: number): Promise<void> {
+    await db.reminders.delete(id);
+    try { await syncDeleteReminder(id); } catch (e) { console.warn("[repository] syncDeleteReminder failed:", e); }
   }
 
   // ─── Seed data ─────────────────────────────────────────────────────────────

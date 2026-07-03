@@ -41,6 +41,11 @@ vi.mock('../services/repository', () => ({
   },
 }));
 
+const mockResendNotification = vi.fn(async (_title: string, _options?: unknown) => {});
+vi.mock('../services/notificationRestoreService', () => ({
+  resendNotification: (title: string, options?: unknown) => mockResendNotification(title, options),
+}));
+
 vi.mock('motion/react', () => ({
   motion: {
     div: ({ children, initial: _i, animate: _a, exit: _e, transition: _t, layout: _l, ...props }:
@@ -289,6 +294,32 @@ describe('HomeView', () => {
       expect(mockGenerateNudges).toHaveBeenCalledOnce();
       const [, , , inboxCountArg] = mockGenerateNudges.mock.calls[0] as [unknown, unknown, boolean, number];
       expect(inboxCountArg).toBe(0);
+    });
+
+    it('shows a resend button on the inbox-pending nudge', () => {
+      mockGenerateNudges.mockReturnValue([
+        { id: 'inbox-pending', message: '💌 2 tasks from your partner are waiting for your review.', type: 'gentle' },
+      ]);
+      renderHomeView([]);
+      expect(screen.getByTestId('resend-inbox-notification')).toBeInTheDocument();
+    });
+
+    it('does not show a resend button on other nudges', () => {
+      mockGenerateNudges.mockReturnValue([
+        { id: 'praise', message: 'Great work today!', type: 'praise' },
+      ]);
+      renderHomeView([]);
+      expect(screen.queryByTestId('resend-inbox-notification')).not.toBeInTheDocument();
+    });
+
+    it('clicking resend calls resendNotification without navigating to tasks', async () => {
+      mockGenerateNudges.mockReturnValue([
+        { id: 'inbox-pending', message: '💌 2 tasks from your partner are waiting for your review.', type: 'gentle' },
+      ]);
+      renderHomeView([]);
+      await userEvent.click(screen.getByTestId('resend-inbox-notification'));
+      expect(mockResendNotification).toHaveBeenCalledOnce();
+      expect(mockOnNavigateToTasks).not.toHaveBeenCalled();
     });
   });
 
