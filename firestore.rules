@@ -13,20 +13,50 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // Inbox: contributor can create and read/delete their own submissions; owner has full access
+    // Contributor allow-list — owner-managed.
+    // A doc at users/{ownerUID}/contributors/{contributorUID} authorizes that
+    // contributor to create submissions in the owner's inbox. Only the owner
+    // can manage this list; deleting a doc revokes that contributor's ability
+    // to submit. (With the invite flow closed below, docs here are created by
+    // the owner directly — console or admin backfill.)
+    match /users/{userId}/contributors/{contributorId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Inbox: owner has full access; a contributor may create a submission only
+    // if they are on the owner's allow-list, and may read/delete only their own
+    // submissions. Creates are shape-validated so a submission is always a
+    // well-formed 'pending' item stamped with the creator's real UID.
     match /users/{userId}/inbox/{inboxId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
-      allow create: if request.auth != null && request.resource.data.contributorUID == request.auth.uid;
+      allow create: if request.auth != null
+        && request.resource.data.contributorUID == request.auth.uid
+        && exists(/databases/$(database)/documents/users/$(userId)/contributors/$(request.auth.uid))
+        && request.resource.data.keys().hasOnly([
+          'title', 'details', 'isUrgent', 'isImportant', 'dueDate',
+          'contributorUID', 'contributorEmail', 'status', 'createdAt'
+        ])
+        && request.resource.data.status == 'pending'
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= 500
+        && (!('details' in request.resource.data)
+            || request.resource.data.details == null
+            || (request.resource.data.details is string
+                && request.resource.data.details.size() <= 5000))
+        && (!('dueDate' in request.resource.data)
+            || request.resource.data.dueDate == null
+            || request.resource.data.dueDate is timestamp)
+        && request.resource.data.isUrgent is bool
+        && request.resource.data.isImportant is bool
+        && request.resource.data.contributorEmail is string
+        && request.resource.data.contributorEmail.size() <= 320
+        && request.resource.data.createdAt is timestamp;
       allow read, delete: if request.auth != null && resource.data.contributorUID == request.auth.uid;
     }
 
     // FCM tokens: user reads/writes their own tokens only
     match /users/{userId}/fcmTokens/{tokenId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-    }
-
-    // Notification preferences: owner read/write only
-    match /users/{userId}/notificationPrefs {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
@@ -36,33 +66,17 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // Contributor permissions: contributor reads/writes their own document only
+    // Contributor permissions: the contributor's own link doc (ownerUID/email),
+    // used by the client to restore owner info after localStorage loss.
     match /users/{userId}/permissions/contributor {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // Invite codes.
-    // - create: only the owner may mint an invite, and only for their own UID.
-    // - get: any authenticated user may read a SINGLE invite *if they know the
-    //   exact code* (the doc ID). `list` is intentionally NOT granted, so the
-    //   collection cannot be enumerated — this prevents harvesting every user's
-    //   ownerEmail/ownerUID and every outstanding code.
-    // - update: the owner may edit their own invite; a contributor may redeem an
-    //   un-redeemed invite by stamping redeemedBy with their own UID (and may not
-    //   alter ownerUID in the process).
-    match /invites/{code} {
-      allow create: if request.auth != null
-                    && request.resource.data.ownerUID == request.auth.uid;
-      allow get: if request.auth != null;
-      allow update: if request.auth != null
-                    && (
-                      resource.data.ownerUID == request.auth.uid
-                      || (
-                        resource.data.get('redeemedBy', null) == null
-                        && request.resource.data.redeemedBy == request.auth.uid
-                        && request.resource.data.ownerUID == resource.data.ownerUID
-                      )
-                    );
-    }
+    // Invites: CLOSED — no match block, so Firestore's default-deny applies to
+    // every operation. The invite flow is intentionally dormant: this app has
+    // exactly one linked contributor, authorized via the allow-list above.
+    // To invite someone again, temporarily restore the invite rules from git
+    // history (see feature/lockdown-invites-inbox), run the redemption, add the
+    // new contributor to the allow-list, then re-lock.
   }
 }

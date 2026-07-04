@@ -5,6 +5,7 @@ import {
   signInWithEmail,
   signUpWithEmail,
   signOutUser,
+  sendPasswordReset,
   runInitialSync,
 } from '../services/firebaseService';
 import { repository } from '../services/repository';
@@ -21,6 +22,7 @@ interface AuthContextValue {
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -91,6 +93,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setSyncStatus('idle');
   };
 
+  const resetPassword = async (email: string) => {
+    await sendPasswordReset(email);
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -102,6 +108,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signIn,
         signUp,
         signOut,
+        resetPassword,
       }}
     >
       {children}
