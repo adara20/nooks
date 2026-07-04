@@ -14,6 +14,7 @@ const {
   mockSignIn,
   mockSignUp,
   mockSignOut,
+  mockResetPassword,
   mockGetReminders,
   mockAddReminder,
   mockUpdateReminder,
@@ -23,6 +24,7 @@ const {
   mockSignIn: vi.fn(),
   mockSignUp: vi.fn(),
   mockSignOut: vi.fn(),
+  mockResetPassword: vi.fn(),
   mockGetReminders: vi.fn(async () => [] as unknown[]),
   mockAddReminder: vi.fn(async (_r: unknown) => 1),
   mockUpdateReminder: vi.fn(async (_id: number, _updates: unknown) => {}),
@@ -128,6 +130,7 @@ const signedOutAuth = {
   signIn: mockSignIn,
   signUp: mockSignUp,
   signOut: mockSignOut,
+  resetPassword: mockResetPassword,
 };
 
 // Signed-in state with uid (for AppModeCard tests)
@@ -138,6 +141,7 @@ const signedInAuthWithUID = (syncStatus: 'idle' | 'syncing' | 'synced' | 'error'
   signIn: mockSignIn,
   signUp: mockSignUp,
   signOut: mockSignOut,
+  resetPassword: mockResetPassword,
 });
 
 // Flush any pending microtask-resolution state updates (e.g. PushNotificationsCard's
@@ -151,6 +155,7 @@ beforeEach(() => {
   mockSignIn.mockResolvedValue(undefined);
   mockSignUp.mockResolvedValue(undefined);
   mockSignOut.mockResolvedValue(undefined);
+  mockResetPassword.mockResolvedValue(undefined);
   vi.mocked(backupService.getLastExportDate).mockReturnValue(null);
   // Default: signed out
   mockUseAuth.mockReturnValue(signedOutAuth);
@@ -439,6 +444,78 @@ describe('SettingsView', () => {
     });
   });
 
+  // ─── Forgot password ──────────────────────────────────────────────────────────
+
+  describe('CloudBackupCard — forgot password', () => {
+    it('shows the forgot-password link in sign-in mode only', async () => {
+      render(<SettingsView onBack={mockOnBack} />);
+      expect(screen.getByTestId('cloud-forgot-password')).toBeInTheDocument();
+      await userEvent.click(screen.getByTestId('cloud-mode-signup'));
+      expect(screen.queryByTestId('cloud-forgot-password')).not.toBeInTheDocument();
+    });
+
+    it('requires an email before sending a reset', async () => {
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.click(screen.getByTestId('cloud-forgot-password'));
+      await waitFor(() => {
+        expect(screen.getByTestId('cloud-auth-error')).toHaveTextContent(/enter your email/i);
+      });
+      expect(mockResetPassword).not.toHaveBeenCalled();
+    });
+
+    it('sends a reset email and shows a confirmation', async () => {
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.type(screen.getByTestId('cloud-email-input'), 'test@test.com');
+      await userEvent.click(screen.getByTestId('cloud-forgot-password'));
+      await waitFor(() => {
+        expect(mockResetPassword).toHaveBeenCalledWith('test@test.com');
+        expect(screen.getByTestId('cloud-reset-message')).toHaveTextContent(/reset link is on its way/i);
+      });
+    });
+
+    it('shows the same confirmation for unknown accounts (no account enumeration)', async () => {
+      mockResetPassword.mockRejectedValue(new Error('auth/user-not-found'));
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.type(screen.getByTestId('cloud-email-input'), 'stranger@test.com');
+      await userEvent.click(screen.getByTestId('cloud-forgot-password'));
+      await waitFor(() => {
+        expect(screen.getByTestId('cloud-reset-message')).toHaveTextContent(/reset link is on its way/i);
+      });
+      expect(screen.queryByTestId('cloud-auth-error')).not.toBeInTheDocument();
+    });
+
+    it('shows a friendly error for an invalid email', async () => {
+      mockResetPassword.mockRejectedValue(new Error('auth/invalid-email'));
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.type(screen.getByTestId('cloud-email-input'), 'notanemail');
+      await userEvent.click(screen.getByTestId('cloud-forgot-password'));
+      await waitFor(() => {
+        expect(screen.getByTestId('cloud-auth-error')).toHaveTextContent(/valid email address/i);
+      });
+    });
+
+    it('shows a generic error when the reset request fails', async () => {
+      mockResetPassword.mockRejectedValue(new Error('network-failure'));
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.type(screen.getByTestId('cloud-email-input'), 'test@test.com');
+      await userEvent.click(screen.getByTestId('cloud-forgot-password'));
+      await waitFor(() => {
+        expect(screen.getByTestId('cloud-auth-error')).toHaveTextContent(/could not send/i);
+      });
+    });
+
+    it('clears the reset confirmation when switching modes', async () => {
+      render(<SettingsView onBack={mockOnBack} />);
+      await userEvent.type(screen.getByTestId('cloud-email-input'), 'test@test.com');
+      await userEvent.click(screen.getByTestId('cloud-forgot-password'));
+      await waitFor(() => {
+        expect(screen.getByTestId('cloud-reset-message')).toBeInTheDocument();
+      });
+      await userEvent.click(screen.getByTestId('cloud-mode-signup'));
+      expect(screen.queryByTestId('cloud-reset-message')).not.toBeInTheDocument();
+    });
+  });
+
   // ─── Cloud Backup Card tests — signed in ──────────────────────────────────────
 
   describe('CloudBackupCard — signed in', () => {
@@ -449,6 +526,7 @@ describe('SettingsView', () => {
       signIn: mockSignIn,
       signUp: mockSignUp,
       signOut: mockSignOut,
+      resetPassword: mockResetPassword,
     });
 
     it('renders the cloud signed-in panel when signed in', () => {

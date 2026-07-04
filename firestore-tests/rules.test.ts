@@ -12,6 +12,7 @@ import {
   getDocs,
   setDoc,
   updateDoc,
+  deleteDoc,
   query,
   where,
 } from 'firebase/firestore';
@@ -57,6 +58,27 @@ async function seed(path: string, data: Record<string, unknown>) {
   });
 }
 
+// The exact submission shape the client (submitInboxTask) writes.
+function validSubmission(overrides: Record<string, unknown> = {}) {
+  return {
+    title: 'Pick up groceries',
+    details: null,
+    isUrgent: false,
+    isImportant: true,
+    dueDate: null,
+    contributorUID: CONTRIB,
+    contributorEmail: 'contrib@example.com',
+    status: 'pending',
+    createdAt: new Date(),
+    ...overrides,
+  };
+}
+
+// Puts CONTRIB on the owner's allow-list, mirroring the production backfill.
+async function linkContributor(uid = CONTRIB) {
+  await seed(`users/${OWNER}/contributors/${uid}`, { linkedAt: new Date() });
+}
+
 describe('owner data isolation (regression — must stay locked)', () => {
   it('owner can read/write their own task; others cannot', async () => {
     await seed(`users/${OWNER}/tasks/1`, { title: 'private', status: 'todo' });
@@ -99,10 +121,160 @@ describe('owner data isolation (regression — must stay locked)', () => {
   });
 });
 
-describe('invites — create', () => {
-  it('owner can mint an invite for their own UID', async () => {
+describe('contributor allow-list (users/{owner}/contributors)', () => {
+  it('owner can add, read, and remove contributors', async () => {
     await assertSucceeds(
-      setDoc(doc(asOwner(), 'invites/ABC123'), {
+      setDoc(doc(asOwner(), `users/${OWNER}/contributors/${CONTRIB}`), { linkedAt: new Date() })
+    );
+    await assertSucceeds(getDoc(doc(asOwner(), `users/${OWNER}/contributors/${CONTRIB}`)));
+    await assertSucceeds(deleteDoc(doc(asOwner(), `users/${OWNER}/contributors/${CONTRIB}`)));
+  });
+
+  it('nobody can add themselves to another user\'s allow-list', async () => {
+    await assertFails(
+      setDoc(doc(asAttacker(), `users/${OWNER}/contributors/${ATTACKER}`), { linkedAt: new Date() })
+    );
+    await assertFails(
+      setDoc(doc(asContrib(), `users/${OWNER}/contributors/${CONTRIB}`), { linkedAt: new Date() })
+    );
+  });
+
+  it('non-owners cannot read the allow-list', async () => {
+    await linkContributor();
+    await assertFails(getDoc(doc(asContrib(), `users/${OWNER}/contributors/${CONTRIB}`)));
+    await assertFails(getDocs(collection(asAttacker(), `users/${OWNER}/contributors`)));
+  });
+});
+
+describe('inbox — create (the core fix: allow-list gated)', () => {
+  it('a linked contributor can submit a well-formed pending item', async () => {
+    await linkContributor();
+    await assertSucceeds(
+      setDoc(doc(asContrib(), `users/${OWNER}/inbox/sub1`), validSubmission())
+    );
+  });
+
+  it('a linked contributor can submit with details and a due date', async () => {
+    await linkContributor();
+    await assertSucceeds(
+      setDoc(
+        doc(asContrib(), `users/${OWNER}/inbox/sub1`),
+        validSubmission({ details: 'the oat milk kind', dueDate: new Date() })
+      )
+    );
+  });
+
+  it('an authenticated stranger CANNOT create in the owner\'s inbox (old rules allowed this)', async () => {
+    // No allow-list entry for ATTACKER — even stamping their own UID must fail.
+    await assertFails(
+      setDoc(
+        doc(asAttacker(), `users/${OWNER}/inbox/spam1`),
+        validSubmission({ contributorUID: ATTACKER, contributorEmail: 'attacker@example.com' })
+      )
+    );
+  });
+
+  it('an unauthenticated user cannot create in the inbox', async () => {
+    await assertFails(
+      setDoc(doc(asAnon(), `users/${OWNER}/inbox/spam1`), validSubmission())
+    );
+  });
+
+  it('a linked contributor cannot forge someone else\'s contributorUID', async () => {
+    await linkContributor();
+    await assertFails(
+      setDoc(
+        doc(asContrib(), `users/${OWNER}/inbox/forged`),
+        validSubmission({ contributorUID: ATTACKER })
+      )
+    );
+  });
+
+  it('a revoked contributor (allow-list doc deleted) can no longer submit', async () => {
+    // Never linked in this test — equivalent to post-revocation state.
+    await assertFails(
+      setDoc(doc(asContrib(), `users/${OWNER}/inbox/late`), validSubmission())
+    );
+  });
+
+  it('submissions must be pending — cannot arrive pre-accepted or carry a taskId', async () => {
+    await linkContributor();
+    await assertFails(
+      setDoc(
+        doc(asContrib(), `users/${OWNER}/inbox/sneaky`),
+        validSubmission({ status: 'accepted' })
+      )
+    );
+    await assertFails(
+      setDoc(
+        doc(asContrib(), `users/${OWNER}/inbox/sneaky2`),
+        { ...validSubmission(), taskId: 42 }
+      )
+    );
+  });
+
+  it('submissions are shape-validated (title required/bounded, no extra fields)', async () => {
+    await linkContributor();
+
+    await assertFails(
+      setDoc(doc(asContrib(), `users/${OWNER}/inbox/notitle`), validSubmission({ title: '' }))
+    );
+    await assertFails(
+      setDoc(
+        doc(asContrib(), `users/${OWNER}/inbox/hugetitle`),
+        validSubmission({ title: 'x'.repeat(501) })
+      )
+    );
+    await assertFails(
+      setDoc(
+        doc(asContrib(), `users/${OWNER}/inbox/extra`),
+        { ...validSubmission(), surprise: 'field' }
+      )
+    );
+  });
+
+  it('the owner retains full write access to their own inbox regardless of shape', async () => {
+    // Owner-side accept/decline updates are not shape-constrained.
+    await seed(`users/${OWNER}/inbox/sub1`, validSubmission());
+    await assertSucceeds(
+      updateDoc(doc(asOwner(), `users/${OWNER}/inbox/sub1`), { status: 'accepted', taskId: 7 })
+    );
+  });
+});
+
+describe('inbox — read/delete scoping (regression)', () => {
+  it('a contributor can query and delete only their own submissions', async () => {
+    await seed(`users/${OWNER}/inbox/mine`, validSubmission());
+    await seed(`users/${OWNER}/inbox/other`, validSubmission({ contributorUID: 'someone-else' }));
+
+    await assertSucceeds(
+      getDocs(query(collection(asContrib(), `users/${OWNER}/inbox`), where('contributorUID', '==', CONTRIB)))
+    );
+    await assertSucceeds(getDoc(doc(asContrib(), `users/${OWNER}/inbox/mine`)));
+    await assertSucceeds(deleteDoc(doc(asContrib(), `users/${OWNER}/inbox/mine`)));
+
+    await assertFails(getDoc(doc(asContrib(), `users/${OWNER}/inbox/other`)));
+    await assertFails(deleteDoc(doc(asContrib(), `users/${OWNER}/inbox/other`)));
+  });
+
+  it('the owner\'s inbox cannot be listed unfiltered by a non-owner', async () => {
+    await seed(`users/${OWNER}/inbox/mine`, validSubmission());
+    await assertFails(getDocs(collection(asContrib(), `users/${OWNER}/inbox`)));
+    await assertFails(getDocs(collection(asAttacker(), `users/${OWNER}/inbox`)));
+  });
+
+  it('a contributor cannot update inbox items (accept/decline is owner-only)', async () => {
+    await seed(`users/${OWNER}/inbox/mine`, validSubmission());
+    await assertFails(
+      updateDoc(doc(asContrib(), `users/${OWNER}/inbox/mine`), { status: 'accepted' })
+    );
+  });
+});
+
+describe('invites — CLOSED (default-deny, no match block)', () => {
+  it('nobody can mint an invite — not even the owner for their own UID', async () => {
+    await assertFails(
+      setDoc(doc(asOwner(), 'invites/NEWCODE'), {
         ownerUID: OWNER,
         ownerEmail: 'owner@example.com',
         createdAt: new Date(),
@@ -111,37 +283,20 @@ describe('invites — create', () => {
     );
   });
 
-  it('a user cannot mint an invite impersonating another owner', async () => {
-    await assertFails(
-      setDoc(doc(asAttacker(), 'invites/FORGED'), {
-        ownerUID: OWNER, // not the attacker's own UID
-        ownerEmail: 'owner@example.com',
-        createdAt: new Date(),
-        expiresAt: new Date(Date.now() + 7 * 864e5),
-      })
-    );
-  });
-});
+  it('existing invite docs cannot be read, even with the exact code', async () => {
+    await seed('invites/OLDCODE', { ownerUID: OWNER, ownerEmail: 'owner@example.com' });
 
-describe('invites — read (the core fix)', () => {
-  it('a contributor who knows the code can get() the invite', async () => {
-    await seed('invites/CODE1', { ownerUID: OWNER, ownerEmail: 'owner@example.com' });
-    await assertSucceeds(getDoc(doc(asContrib(), 'invites/CODE1')));
+    await assertFails(getDoc(doc(asContrib(), 'invites/OLDCODE')));
+    await assertFails(getDoc(doc(asAttacker(), 'invites/OLDCODE')));
+    await assertFails(getDoc(doc(asOwner(), 'invites/OLDCODE')));
   });
 
-  it('the invites collection CANNOT be enumerated (no harvesting emails/codes)', async () => {
+  it('the invites collection cannot be enumerated', async () => {
     await seed('invites/CODE1', { ownerUID: OWNER, ownerEmail: 'owner@example.com' });
-    await seed('invites/CODE2', { ownerUID: 'other', ownerEmail: 'other@example.com' });
-
-    // This is the exact attack the old `allow read` permitted.
     await assertFails(getDocs(collection(asAttacker(), 'invites')));
-    await assertFails(getDocs(collection(asContrib(), 'invites')));
   });
-});
 
-describe('invites — redeem (backward compatibility with existing invites)', () => {
-  it('an EXISTING (old-rules) un-redeemed invite can still be redeemed', async () => {
-    // No redeemedBy field — mirrors a doc created before this change.
+  it('existing invites cannot be redeemed or updated', async () => {
     await seed('invites/OLDCODE', {
       ownerUID: OWNER,
       ownerEmail: 'owner@example.com',
@@ -149,44 +304,34 @@ describe('invites — redeem (backward compatibility with existing invites)', ()
       expiresAt: new Date(Date.now() + 7 * 864e5),
     });
 
-    await assertSucceeds(
-      updateDoc(doc(asContrib(), 'invites/OLDCODE'), {
-        redeemedBy: CONTRIB,
+    await assertFails(
+      updateDoc(doc(asAttacker(), 'invites/OLDCODE'), {
+        redeemedBy: ATTACKER,
         redeemedAt: new Date(),
       })
     );
+    await assertFails(
+      updateDoc(doc(asOwner(), 'invites/OLDCODE'), { expiresAt: new Date() })
+    );
   });
+});
 
-  it('an already-redeemed invite cannot be re-redeemed by someone else', async () => {
-    await seed('invites/USED', {
+describe('contributor permission doc (localStorage recovery path)', () => {
+  it('a contributor can read and write their own permission doc', async () => {
+    await seed(`users/${CONTRIB}/permissions/contributor`, {
       ownerUID: OWNER,
       ownerEmail: 'owner@example.com',
-      redeemedBy: CONTRIB,
+      linkedAt: new Date(),
     });
-
-    await assertFails(
-      updateDoc(doc(asAttacker(), 'invites/USED'), {
-        redeemedBy: ATTACKER,
-        redeemedAt: new Date(),
-      })
-    );
+    await assertSucceeds(getDoc(doc(asContrib(), `users/${CONTRIB}/permissions/contributor`)));
   });
 
-  it('a redeemer cannot rewrite ownerUID while redeeming', async () => {
-    await seed('invites/CODE', { ownerUID: OWNER, ownerEmail: 'owner@example.com' });
-
-    await assertFails(
-      updateDoc(doc(asAttacker(), 'invites/CODE'), {
-        redeemedBy: ATTACKER,
-        ownerUID: ATTACKER, // attempt to hijack ownership
-      })
-    );
-  });
-
-  it('the owner can still update their own invite', async () => {
-    await seed('invites/MINE', { ownerUID: OWNER, ownerEmail: 'owner@example.com' });
-    await assertSucceeds(
-      updateDoc(doc(asOwner(), 'invites/MINE'), { expiresAt: new Date(Date.now() + 864e5) })
-    );
+  it('nobody else can read a contributor\'s permission doc', async () => {
+    await seed(`users/${CONTRIB}/permissions/contributor`, {
+      ownerUID: OWNER,
+      ownerEmail: 'owner@example.com',
+    });
+    await assertFails(getDoc(doc(asAttacker(), `users/${CONTRIB}/permissions/contributor`)));
+    await assertFails(getDoc(doc(asOwner(), `users/${CONTRIB}/permissions/contributor`)));
   });
 });

@@ -12,12 +12,14 @@ const {
   mockSignInWithEmail,
   mockSignUpWithEmail,
   mockSignOutUser,
+  mockSendPasswordReset,
   mockRunInitialSync,
 } = vi.hoisted(() => ({
   mockOnAuthChange: vi.fn(),
   mockSignInWithEmail: vi.fn(),
   mockSignUpWithEmail: vi.fn(),
   mockSignOutUser: vi.fn(),
+  mockSendPasswordReset: vi.fn(),
   mockRunInitialSync: vi.fn(),
 }));
 
@@ -26,6 +28,7 @@ vi.mock('../services/firebaseService', () => ({
   signInWithEmail: (email: string, password: string) => mockSignInWithEmail(email, password),
   signUpWithEmail: (email: string, password: string) => mockSignUpWithEmail(email, password),
   signOutUser: () => mockSignOutUser(),
+  sendPasswordReset: (email: string) => mockSendPasswordReset(email),
   runInitialSync: (uid: string, callbacks: unknown) => mockRunInitialSync(uid, callbacks),
 }));
 
@@ -45,7 +48,7 @@ const TestConsumer: React.FC<{
   onSignUp?: () => void;
   onSignOut?: () => void;
 }> = ({ onSignIn, onSignUp, onSignOut }) => {
-  const { user, isSignedIn, authLoading, syncStatus, signIn, signUp, signOut } = useAuth();
+  const { user, isSignedIn, authLoading, syncStatus, signIn, signUp, signOut, resetPassword } = useAuth();
   return (
     <div>
       <span data-testid="loading">{String(authLoading)}</span>
@@ -55,6 +58,7 @@ const TestConsumer: React.FC<{
       <button onClick={() => { signIn('a@b.com', 'pass'); onSignIn?.(); }}>Sign In</button>
       <button onClick={() => { signUp('a@b.com', 'pass'); onSignUp?.(); }}>Sign Up</button>
       <button onClick={() => { signOut(); onSignOut?.(); }}>Sign Out</button>
+      <button onClick={() => { resetPassword('a@b.com'); }}>Reset Password</button>
     </div>
   );
 };
@@ -145,6 +149,13 @@ describe('AuthContext', () => {
     renderWithAuth();
     await userEvent.click(screen.getByText('Sign Out'));
     expect(mockSignOutUser).toHaveBeenCalledOnce();
+  });
+
+  it('resetPassword calls sendPasswordReset with the email', async () => {
+    mockOnAuthChange.mockImplementation((cb: (u: null) => void) => { cb(null); return vi.fn(); });
+    renderWithAuth();
+    await userEvent.click(screen.getByText('Reset Password'));
+    expect(mockSendPasswordReset).toHaveBeenCalledWith('a@b.com');
   });
 
   it('signOut resets syncStatus to idle', async () => {

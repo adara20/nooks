@@ -520,12 +520,36 @@ const RemindersCard: React.FC = () => {
 // ─── Cloud Backup Card ────────────────────────────────────────────────────────
 
 const CloudBackupCard: React.FC = () => {
-  const { user, isSignedIn, syncStatus, signIn, signUp, signOut } = useAuth();
+  const { user, isSignedIn, syncStatus, signIn, signUp, signOut, resetPassword } = useAuth();
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
+  const [resetMessage, setResetMessage] = useState<string | null>(null);
+
+  const handleForgotPassword = async () => {
+    setAuthError(null);
+    setResetMessage(null);
+    if (!email.trim()) {
+      setAuthError('Enter your email above first, then tap "Forgot password?".');
+      return;
+    }
+    try {
+      await resetPassword(email.trim());
+      setResetMessage('If an account exists for that email, a reset link is on its way.');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('auth/invalid-email')) {
+        setAuthError('Please enter a valid email address.');
+      } else if (msg.includes('auth/user-not-found')) {
+        // Same message as success — don't reveal whether an account exists.
+        setResetMessage('If an account exists for that email, a reset link is on its way.');
+      } else {
+        setAuthError('Could not send the reset email. Please try again.');
+      }
+    }
+  };
 
   const handleAuth = async () => {
     if (!email.trim() || !password.trim()) {
@@ -627,7 +651,7 @@ const CloudBackupCard: React.FC = () => {
               ? 'bg-nook-ink text-white'
               : 'bg-transparent text-nook-ink/50 hover:text-nook-ink'
           )}
-          onClick={() => { setMode('signin'); setAuthError(null); }}
+          onClick={() => { setMode('signin'); setAuthError(null); setResetMessage(null); }}
           data-testid="cloud-mode-signin"
         >
           Sign in
@@ -639,7 +663,7 @@ const CloudBackupCard: React.FC = () => {
               ? 'bg-nook-ink text-white'
               : 'bg-transparent text-nook-ink/50 hover:text-nook-ink'
           )}
-          onClick={() => { setMode('signup'); setAuthError(null); }}
+          onClick={() => { setMode('signup'); setAuthError(null); setResetMessage(null); }}
           data-testid="cloud-mode-signup"
         >
           Create account
@@ -669,8 +693,22 @@ const CloudBackupCard: React.FC = () => {
         />
       </div>
 
+      {mode === 'signin' && (
+        <button
+          type="button"
+          className="text-xs text-nook-ink/50 underline hover:text-nook-ink transition-colors"
+          onClick={handleForgotPassword}
+          data-testid="cloud-forgot-password"
+        >
+          Forgot password?
+        </button>
+      )}
+
       {authError && (
         <p className="text-xs text-red-600" role="alert" data-testid="cloud-auth-error">{authError}</p>
+      )}
+      {resetMessage && (
+        <p className="text-xs text-nook-ink/60" role="status" data-testid="cloud-reset-message">{resetMessage}</p>
       )}
 
       <Button
