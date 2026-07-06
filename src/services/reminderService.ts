@@ -8,6 +8,10 @@ import { type Reminder } from '../db';
 export function computeNextDueDate(current: Date, intervalDays: number): Date {
   const next = new Date(current);
   next.setDate(next.getDate() + intervalDays);
+  // Normalize to midnight UTC so the date always lands before the 8 AM ET daily
+  // cron window. Without this, a reminder created at 10 PM would set nextDueDate
+  // to 10 PM of the target day, causing the cron to miss it and fire one day late.
+  next.setUTCHours(0, 0, 0, 0);
   return next;
 }
 
