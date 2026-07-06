@@ -71,6 +71,7 @@ export const onReminderDue = onSchedule(
 
       const nextDueDate = new Date(currentDueDate);
       nextDueDate.setDate(nextDueDate.getDate() + intervalDays);
+      nextDueDate.setUTCHours(0, 0, 0, 0);
 
       await reminderDoc.ref.update({
         nextDueDate,

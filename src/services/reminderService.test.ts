@@ -21,6 +21,14 @@ describe('reminderService: computeNextDueDate', () => {
     expect(date.toISOString().slice(0, 10)).toBe('2026-01-16'); // 3 x 5 days
   });
 
+  it('normalizes to midnight UTC regardless of the input time-of-day', () => {
+    // Reminder created at 10 PM — without normalization the nextDueDate would be
+    // 10 PM of the target day, causing the 8 AM ET daily cron to miss it and fire
+    // one day late.
+    const next = computeNextDueDate(new Date('2026-07-04T22:00:00Z'), 1);
+    expect(next.toISOString()).toBe('2026-07-05T00:00:00.000Z');
+  });
+
   it('does not mutate the input date', () => {
     const original = new Date('2026-07-02T00:00:00Z');
     const originalTime = original.getTime();
